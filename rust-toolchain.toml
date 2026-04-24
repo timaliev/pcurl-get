@@ -1,0 +1,7 @@
+# rust-toolchain.toml
+# vim: set ft=toml
+#
+[toolchain]
+channel = "nightly"
+# channel = "stable"
+components = ["clippy", "rustfmt"]

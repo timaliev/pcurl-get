@@ -1,0 +1,9 @@
+# clippy.toml
+# vim: set ft=toml
+#
+
+# Disable restrictions on types/macros for flexibility
+disallowed-types = []
+disallowed-macros = []
+
+absolute-paths-max-segments = 5

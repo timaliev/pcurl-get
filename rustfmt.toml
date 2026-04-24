@@ -1,0 +1,39 @@
+# rustfmt.toml
+# vim: set ft=toml
+#
+# Styling and width
+# 
+edition = "2024"          # Rust edition (2015, 2018, 2021, 2024)
+max_width = 100           # Max line width (default is 100)
+tab_spaces = 2            # Spaces per tab
+indent_style = "Block"    # "Block" or "Visual"
+use_small_heuristics = "Default" # "Max", "Off", etc.
+# 
+# Braces and control‑flow
+# 
+brace_style = "PreferSameLine"  # "AlwaysNextLine", "Legacy", etc.
+control_brace_style = "ClosingNextLine"  # brace style for `if`, `while`, etc.
+trailing_semicolon = true       # whether to add trailing semis after expressions
+trailing_comma = "Vertical"     # How to handle trailing commas for lists
+# 
+# Import and item layout
+# 
+imports_granularity = "Crate"        # "Crate", "Item", "Preserve"
+reorder_imports = true               # reorder import groups
+reorder_modules = true               # reorder `mod` items
+reorder_impl_items = true            # reorder items in `impl` blocks
+wrap_comments = true                 # wrap long comments
+# 
+# Comments and docs
+# 
+format_code_in_doc_comments = true   # format code blocks in docs
+comment_width = 100                  # wrap comments at this width
+# wrap_match_arms = false               # wrap long `match` arm patterns
+#
+# Control / validation
+#
+error_on_line_overflow = false       # error if line is longer than max_width
+error_on_unformatted = false         # error if rustfmt can’t format something
+color = "Auto"                       # "Always", "Never", "Auto"
+unstable_features = true             # enable unstable options (nightly only)
+disable_all_formatting = false       # disables formatting entirely
