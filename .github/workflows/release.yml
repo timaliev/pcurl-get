@@ -2,6 +2,7 @@ name: PCurl-Get Release
 run-name: ${{ github.action }} by @${{ github.actor }}
 
 on:
+  workflow_dispatch:
   branch_protection_rule:
   pull_request_target:
     branches:
