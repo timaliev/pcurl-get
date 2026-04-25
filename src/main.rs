@@ -49,7 +49,7 @@ async fn main() -> Result<()> {
     let client = client.clone();
     let url = url.trim().to_string();
     let save = args.save;
-    eprintln!("DEBUG: fetching {} {}", i, url);
+    // eprintln!("DEBUG: fetching {} {}", i, url);
     let handle = task::spawn(async move {
       fetch_url(&client, &url, save, i)
         .await
@@ -62,7 +62,11 @@ async fn main() -> Result<()> {
   for handle in handles {
     results.push(handle.await?);
   }
-  println!("✅ Successfully processed {} URLs", results.len());
+  println!(
+    "✅ Successfully processed {} lines in {}",
+    results.len(),
+    &args.urls_file.to_string_lossy()
+  );
   // println!("Received {:?} bytes of content", );
   // Calculate and display duration
   let duration = start_instant.elapsed().as_secs_f64();
