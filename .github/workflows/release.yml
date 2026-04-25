@@ -3,6 +3,9 @@ run-name: to ${{ inputs.deploy_target }} by @${{ github.actor }}
 
 on:
   branch_protection_rule:
+  pull_request_target:
+    branches:
+      - release
   push:
     branches:
       - release
