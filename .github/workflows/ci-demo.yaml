@@ -22,8 +22,7 @@ jobs:
           #cat /etc/os-release
           VERSIONID=$(cat /etc/os-release | grep VERSION_ID | cut -d'=' -f2)
           echo
-          echo "Version: $VERSION"
           echo "Version: $VERSIONID"
-          echo "VERSIONID=$VERSIONID" >> "$GITHUB_OUTPUT"
+          echo "VERSIONID=$VERSIONID" >> "$GITHUB_ENV"
       - run: echo "🍏 This job's status is ${{ job.status }}."
       - run: echo "Which version is it? ${VERSIONID}"
