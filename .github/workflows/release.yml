@@ -1,4 +1,5 @@
-name: PCurl Get Release
+name: PCurl-Get Release
+run-name: to ${{ inputs.deploy_target }} by @${{ github.actor }}
 
 on:
   branch_protection_rule:
@@ -129,7 +130,7 @@ jobs:
       - name: Update version in Cargo.toml
         if: github.ref == 'refs/heads/release'
         run: |
-          NEW_VERSION=$(grep -oP '^version\s*=\s*"\K[^"]+' Cargo.toml)
+          # NEW_VERSION=$(grep -oP '^version\s*=\s*"\K[^"]+' Cargo.toml)
           sed -i "s/^version = \"[^\"]*\"/version = \"$NEW_VERSION\"/" Cargo.toml
 
       - name: Create pull request for version bump
