@@ -47,11 +47,13 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y musl-tools
+          rustup target add ${{ matrix.target }}
 
       - name: Install cross-compilation dependencies (macOS)
         if: matrix.os == 'macos-latest'
         run: |
           brew install musl
+          rustup target add ${{ matrix.target }}
 
       - name: Build tool
         id: build-tools
