@@ -1,0 +1,152 @@
+name: PCurl Get Release
+
+on:
+  branch_protection_rule:
+  push:
+    branches:
+      - release
+
+permissions:
+  contents: write
+  pull-requests: write
+  actions: write
+
+jobs:
+  build-and-release:
+    name: Build and Release
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, ubuntu-latest]
+        include:
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            architecture: aarch64
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-musl
+            architecture: x86_64
+          - os: ubuntu-latest
+            target: aarch64-unknown-linux-musl
+            architecture: aarch64
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Get version from Cargo.toml
+        id: cargo_version
+        run: |
+          VERSION=$(grep -oP '^version\s*=\s*"\K[^"]+' Cargo.toml)
+          echo "VERSION=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Version: $VERSION"
+
+      - name: Setup Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }},x86_64-unknown-linux-musl,aarch64-unknown-linux-musl
+
+      - name: Install musl-tools for static linking
+        if: matrix.target == 'x86_64-unknown-linux-musl' || matrix.target == 'aarch64-unknown-linux-musl'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y musl-tools
+
+      - name: Install cross-compilation dependencies (macOS)
+        if: matrix.os == 'macos-latest'
+        run: |
+          brew install musl
+
+      - name: Cache cargo build
+        uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
+
+      - name: Build for ${{ matrix.architecture }}
+        run: |
+          cargo build --release --target ${{ matrix.target }}
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: pcurl-get-${{ matrix.target }}-${{ github.sha }}
+          path: target/${{ matrix.target }}/release/pcurl-get
+          if-no-files-found: ignore
+
+      - name: Generate release notes
+        id: release_notes
+        run: |
+          echo "Generating release notes..."
+          RELEASE_NOTES="**Release ${{ steps.cargo_version.outputs.VERSION }}**\n\n"
+          RELEASE_NOTES+"### Features and Fixes\n\n"
+          RELEASE_NOTES+"- See commit history for detailed changes\n\n"
+          RELEASE_NOTES+"### Platforms\n\n"
+          RELEASE_NOTES+"- macOS Darwin aarch64\n"
+          RELEASE_NOTES+"- Linux x86-64\n"
+          RELEASE_NOTES+"- Linux aarch64\n\n"
+          echo "notes<<EOF"
+          echo "$RELEASE_NOTES"
+          echo "EOF"
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v1
+        if: github.ref == 'refs/heads/release'
+        with:
+          tag_name: v${{ steps.cargo_version.outputs.VERSION }}
+          name: Release v${{ steps.cargo_version.outputs.VERSION }}
+          body: ${{ steps.release_notes.outputs.notes }}
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Bump version for next release
+        if: github.ref == 'refs/heads/release'
+        run: |
+          # Parse current version from Cargo.toml
+          CURRENT_VERSION=$(grep -oP '^version\s*=\s*"\K[^"]+' Cargo.toml)
+          MAJOR=$(echo $CURRENT_VERSION | cut -d. -f1)
+          MINOR=$(echo $CURRENT_VERSION | cut -d. -f2)
+          PATCH=$(echo $CURRENT_VERSION | cut -d. -f3)
+
+          # Check if this was a feat commit (bump minor) or fix commit (bump patch)
+          LATEST_COMMIT=$(git log -1 --format="%s")
+
+          if [[ $LATEST_COMMIT == feat:* ]]; then
+            NEW_VERSION="${MAJOR}.$((MINOR + 1)).0"
+          elif [[ $LATEST_COMMIT == fix:* ]]; then
+            NEW_VERSION="${MAJOR}.${MINOR}.$((PATCH + 1))"
+          else
+            # Default to patch bump
+            NEW_VERSION="${MAJOR}.${MINOR}.$((PATCH + 1))"
+          fi
+
+          echo "New version: $NEW_VERSION"
+          echo "NEW_VERSION=$NEW_VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Update version in Cargo.toml
+        if: github.ref == 'refs/heads/release'
+        run: |
+          NEW_VERSION=$(grep -oP '^version\s*=\s*"\K[^"]+' Cargo.toml)
+          sed -i "s/^version = \"[^\"]*\"/version = \"$NEW_VERSION\"/" Cargo.toml
+
+      - name: Create pull request for version bump
+        if: github.ref == 'refs/heads/release'
+        run: |
+          # Create a PR for the version bump
+          # This is a placeholder - actual implementation would use octokit
+          echo "Pull request for version bump would be created here"
+          echo "From: release"
+          echo "To: master"
+          echo "Title: Bump version to v${NEW_VERSION}"
+
+  notify:
+    needs: build-and-release
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Notify
+        run: |
+          echo "Release job completed with status: ${{ job.status }}"
