@@ -9,13 +9,14 @@ Very simple async URL get CLI program with unlimited parallelism. Parallel URL f
 
 There is optional argument `--save` which will make program to save fetched URL content into the file in current working directory. File name will follow this pattern:
 
-`{index}-{host name}-{port number}_path-{Sha256 of URL}`,
+`{index}-{hostname}-{port number}_path-{Sha256 of URL}`,
 
 ```
 where,
-  index -- index of URL in URLs list,
-  host name -- hostname for each URL, where each '.' is replaced with '_',
-  port number, including default ports '80/443'.
+  index of URL in URLs list,
+  hostname for each URL, where each '.' is replaced with '_',
+  port number, including default ports '80/443',
+  URL path part, where each '/' is replaced with '_'.
 ```
 
 If no `--save` option is used, content of fetched URLs will be discarded with reporting to `stdout`.
