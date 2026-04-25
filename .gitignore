@@ -1,3 +1,4 @@
 target/
-test_dir/
-.ansible/
+tests/files
+tests/*.txt
+!/tests/tests.rs
