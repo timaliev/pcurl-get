@@ -37,13 +37,6 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Get version from Cargo.toml
-        id: cargo_version
-        run: |
-          VERSION=$(grep -oP '^version\s*=\s*"\K[^"]+' Cargo.toml)
-          echo "VERSION=$VERSION" >> "$GITHUB_OUTPUT"
-          echo "Version: $VERSION"
-
       - name: Setup Rust toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
@@ -59,6 +52,33 @@ jobs:
         if: matrix.os == 'macos-latest'
         run: |
           brew install musl
+
+      - name: Build tool
+        id: build-tools
+        run: |
+          # Compile all of my Rust tools
+          cd tools
+          rustc cargo_version.rs
+
+          # Make it available in PATH
+          echo "$(pwd)" >> $GITHUB_PATH          
+
+          # Upload as artifact
+          # echo "tool-path=$(pwd)/cargo_version" >> $GITHUB_OUTPUT
+
+      # - name: Upload compiled tool
+      #   uses: actions/upload-artifact@v4
+      #   with:
+      #     name: cargo_version
+      #     path: cargo_version
+      #     retention-days: 1
+
+      - name: Get version from Cargo.toml
+        id: cargo_version
+        run: |
+          VERSION=$(cargo_version)
+          echo "VERSION=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Version: $VERSION"
 
       - name: Cache cargo build
         uses: Swatinem/rust-cache@v2
