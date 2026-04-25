@@ -18,4 +18,9 @@ jobs:
       - name: List files in the repository
         run: |
           ls ${{ github.workspace }}
+          env
+          VERSION=$(cat /etc/os-release | grep VERSION | cut -d'=' -f2)
+          echo "VERSION=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Version: $VERSION"
       - run: echo "🍏 This job's status is ${{ job.status }}."
+      - run: echo "Which version is it? ${VERSION}"
