@@ -55,7 +55,7 @@ jobs:
       - name: Install cross-compilation dependencies (macOS)
         if: matrix.os == 'macos-latest'
         run: |
-          brew install musl
+          brew install musl-cross
           rustup target add ${{ matrix.target }}
 
       - name: Build tool
@@ -71,19 +71,19 @@ jobs:
           # Upload as artifact
           # echo "tool-path=$(pwd)/cargo_version" >> $GITHUB_OUTPUT
 
-      # - name: Upload compiled tool
-      #   uses: actions/upload-artifact@v4
-      #   with:
-      #     name: cargo_version
-      #     path: cargo_version
-      #     retention-days: 1
+      - name: Upload compiled tool
+        uses: actions/upload-artifact@v4
+        with:
+          name: cargo_version
+          path: cargo_version
+          retention-days: 1
 
       - name: Get version from Cargo.toml
         id: cargo_version
         run: |
-          VERSION=$(cargo_version)
-          echo "VERSION=$VERSION" >> "$GITHUB_OUTPUT"
-          echo "Version: $VERSION"
+          CARGO_VERSION=$(cargo_version)
+          echo "CARGO_VERSION=$CARGO_VERSION" >> "$GITHUB_OUTPUT"
+          echo "Version: $CARGO_VERSION"
 
       - name: Cache cargo build
         uses: Swatinem/rust-cache@v2
@@ -120,8 +120,8 @@ jobs:
         uses: softprops/action-gh-release@v1
         if: github.ref == 'refs/heads/release'
         with:
-          tag_name: v${{ steps.cargo_version.outputs.VERSION }}
-          name: Release v${{ steps.cargo_version.outputs.VERSION }}
+          tag_name: v${{ steps.cargo_version.outputs.CARGO_VERSION }}
+          name: Release v${{ steps.cargo_version.outputs.CARGO_VERSION }}
           body: ${{ steps.release_notes.outputs.notes }}
           draft: false
           prerelease: false
@@ -132,7 +132,7 @@ jobs:
         if: github.ref == 'refs/heads/release'
         run: |
           # Parse current version from Cargo.toml
-          CURRENT_VERSION=$(grep -oP '^version\s*=\s*"\K[^"]+' Cargo.toml)
+          CURRENT_VERSION=${{ steps.cargo_version.outputs.CARGO_VERSION }}
           MAJOR=$(echo $CURRENT_VERSION | cut -d. -f1)
           MINOR=$(echo $CURRENT_VERSION | cut -d. -f2)
           PATCH=$(echo $CURRENT_VERSION | cut -d. -f3)
