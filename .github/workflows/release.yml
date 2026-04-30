@@ -1,11 +1,12 @@
 name: PCurl-Get Release
-run-name: to ${{ inputs.deploy_target }} by @${{ github.actor }}
+run-name: ${{ github.action }} by @${{ github.actor }}
 
 on:
   branch_protection_rule:
   push:
-    branches:
-      - release
+    branches: [ master ]
+    tags:
+      - "v*.*.*"
 
 permissions:
   contents: write
@@ -13,98 +14,51 @@ permissions:
   actions: write
 
 jobs:
-  build-and-release:
-    name: Build and Release
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [macos-latest, ubuntu-latest]
-        include:
-          - os: macos-latest
-            target: aarch64-apple-darwin
-            architecture: aarch64
-          - os: ubuntu-latest
-            target: x86_64-unknown-linux-musl
-            architecture: x86_64
-          - os: ubuntu-latest
-            target: aarch64-unknown-linux-musl
-            architecture: aarch64
+  just-release:
+    name: Release software
+    runs-on: ubuntu-latest
 
     steps:
       - name: Checkout Repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           fetch-depth: 0
 
       - name: Setup Rust toolchain
         uses: dtolnay/rust-toolchain@stable
+
+      - name: Setup git-cliff
+        run: |
+          # Get git-cliff for this platform
+          cargo install git-cliff
+          # Generate default configuration if repository doesn't have one
+          [ -f cliff.toml ] || git-cliff --init
+
+      - name: Download persistent Git configuration
+        uses: actions/download-artifact@v8
         with:
-          targets: ${{ matrix.target }},x86_64-unknown-linux-musl,aarch64-unknown-linux-musl
+          name: gitconfig
+          path: tmp/git/
 
-      - name: Install musl-tools for static linking
-        if: matrix.target == 'x86_64-unknown-linux-musl' || matrix.target == 'aarch64-unknown-linux-musl'
+      - name: Setup Git
+        id: git-setup
         run: |
-          sudo apt-get update
-          sudo apt-get install -y musl-tools
-          rustup target add ${{ matrix.target }}
+          export $(git config --file tmp/git/config githubconf.env.env1)
+          export $(git config --file tmp/git/config githubconf.env.env2)
+          export $(git config --file tmp/git/config githubconf.env.env3)
+          export $(git config --file tmp/git/config githubconf.env.env4)
+          export $(git config --file tmp/git/config githubconf.env.env5)
+          echo ${XDG_CONFIG_HOME} >> "$GITHUB_ENV"
+          echo ${BASE_BRANCH} >> "$GITHUB_ENV"
+          echo ${NEW_RELEASE} >> "$GITHUB_ENV"
+          echo ${NEW_VERSION} >> "$GITHUB_ENV"
+          echo ${NEW_VERSION_TAG} >> "$GITHUB_ENV"
 
-      - name: Install cross-compilation dependencies (macOS)
-        if: matrix.os == 'macos-latest'
-        run: |
-          brew install musl
-          rustup target add ${{ matrix.target }}
-
-      - name: Build tool
-        id: build-tools
-        run: |
-          # Compile all of my Rust tools
-          cd tools
-          rustc cargo_version.rs
-
-          # Make it available in PATH
-          echo "$(pwd)" >> $GITHUB_PATH          
-
-          # Upload as artifact
-          # echo "tool-path=$(pwd)/cargo_version" >> $GITHUB_OUTPUT
-
-      # - name: Upload compiled tool
-      #   uses: actions/upload-artifact@v4
-      #   with:
-      #     name: cargo_version
-      #     path: cargo_version
-      #     retention-days: 1
-
-      - name: Get version from Cargo.toml
-        id: cargo_version
-        run: |
-          VERSION=$(cargo_version)
-          echo "VERSION=$VERSION" >> "$GITHUB_OUTPUT"
-          echo "Version: $VERSION"
-
-      - name: Cache cargo build
-        uses: Swatinem/rust-cache@v2
-        with:
-          cache-on-failure: true
-
-      - name: Build for ${{ matrix.architecture }}
-        run: |
-          cargo build --release --target ${{ matrix.target }}
-
-      - name: Upload artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: pcurl-get-${{ matrix.target }}-${{ github.sha }}
-          path: target/${{ matrix.target }}/release/pcurl-get
-          if-no-files-found: ignore
-
-      - name: Generate release notes
+      - name: Generate release notes with git-cliff
         id: release_notes
         run: |
           echo "Generating release notes..."
-          RELEASE_NOTES="**Release ${{ steps.cargo_version.outputs.VERSION }}**\n\n"
-          RELEASE_NOTES+"### Features and Fixes\n\n"
-          RELEASE_NOTES+"- See commit history for detailed changes\n\n"
+          RELEASE_NOTES="$(git-cliff --config github --latest)\n\n"
           RELEASE_NOTES+"### Platforms\n\n"
           RELEASE_NOTES+"- macOS Darwin aarch64\n"
           RELEASE_NOTES+"- Linux x86-64\n"
@@ -112,61 +66,78 @@ jobs:
           echo "notes<<EOF"
           echo "$RELEASE_NOTES"
           echo "EOF"
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Download binaries built for different platforms
+        uses: actions/download-artifact@v8
+        with:
+          pattern: pcurl-get-*
+          path: tmp/assets/
+          merge-multiple: true
 
       - name: Create GitHub Release
-        uses: softprops/action-gh-release@v1
-        if: github.ref == 'refs/heads/release'
+        uses: softprops/action-gh-release@v3
+        if: github.ref_name == 'master'
         with:
-          tag_name: v${{ steps.cargo_version.outputs.VERSION }}
-          name: Release v${{ steps.cargo_version.outputs.VERSION }}
+          tag_name: ${{ env.NEW_VERSION_TAG }}
+          name: Release ${{ env.NEW_VERSION_TAG }}
           body: ${{ steps.release_notes.outputs.notes }}
+          files: |
+            tmp/assets/pcurl-get-*
           draft: false
           prerelease: false
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+  post-release:
+    name: Merge release back onto development branch
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Download persistent Git configuration
+        uses: actions/download-artifact@v8
+        with:
+          name: gitconfig
+          path: tmp/git/
+
+      - name: Setup Git
+        id: git-setup
+        run: |
+          export $(git config --file tmp/git/config githubconf.env.env1)
+          export $(git config --file tmp/git/config githubconf.env.env2)
+          export $(git config --file tmp/git/config githubconf.env.env3)
+          export $(git config --file tmp/git/config githubconf.env.env4)
+          export $(git config --file tmp/git/config githubconf.env.env5)
+          echo ${XDG_CONFIG_HOME} >> "$GITHUB_ENV"
+          echo ${BASE_BRANCH} >> "$GITHUB_ENV"
+          echo ${NEW_RELEASE} >> "$GITHUB_ENV"
+          echo ${NEW_VERSION} >> "$GITHUB_ENV"
+          echo ${NEW_VERSION_TAG} >> "$GITHUB_ENV"
+
       - name: Bump version for next release
-        if: github.ref == 'refs/heads/release'
         run: |
-          # Parse current version from Cargo.toml
-          CURRENT_VERSION=$(grep -oP '^version\s*=\s*"\K[^"]+' Cargo.toml)
-          MAJOR=$(echo $CURRENT_VERSION | cut -d. -f1)
-          MINOR=$(echo $CURRENT_VERSION | cut -d. -f2)
-          PATCH=$(echo $CURRENT_VERSION | cut -d. -f3)
+          NEW_VERSION=${NEW_VERSION}+
+          sed -E -i "s/^version = \"[^\"]*\"/version = \"${NEW_VERSION}\"/" Cargo.toml
+          echo ${NEW_VERSION} > VERSION
 
-          # Check if this was a feat commit (bump minor) or fix commit (bump patch)
-          LATEST_COMMIT=$(git log -1 --format="%s")
-
-          if [[ $LATEST_COMMIT == feat:* ]]; then
-            NEW_VERSION="${MAJOR}.$((MINOR + 1)).0"
-          elif [[ $LATEST_COMMIT == fix:* ]]; then
-            NEW_VERSION="${MAJOR}.${MINOR}.$((PATCH + 1))"
-          else
-            # Default to patch bump
-            NEW_VERSION="${MAJOR}.${MINOR}.$((PATCH + 1))"
-          fi
-
-          echo "New version: $NEW_VERSION"
-          echo "NEW_VERSION=$NEW_VERSION" >> "$GITHUB_OUTPUT"
-
-      - name: Update version in Cargo.toml
-        if: github.ref == 'refs/heads/release'
+      - name: Merge back to development branch
         run: |
-          # NEW_VERSION=$(grep -oP '^version\s*=\s*"\K[^"]+' Cargo.toml)
-          sed -i "s/^version = \"[^\"]*\"/version = \"$NEW_VERSION\"/" Cargo.toml
-
-      - name: Create pull request for version bump
-        if: github.ref == 'refs/heads/release'
-        run: |
-          # Create a PR for the version bump
-          # This is a placeholder - actual implementation would use octokit
-          echo "Pull request for version bump would be created here"
-          echo "From: release"
-          echo "To: master"
-          echo "Title: Bump version to v${NEW_VERSION}"
+          # git checkout master
+          # git pull
+          # Done with the action actions/checkout@v6 above
+          git checkout "${BASE_BRANCH}"
+          git merge ${{ github.ref_name }}  # Brings in version tag and changelog
+          # Force delete `release` branch if possible and push all back into repository
+          git branch -D release 2>/dev/null || true
+          git push --all origin
 
   notify:
-    needs: build-and-release
+    needs: post-release
     if: always()
     runs-on: ubuntu-latest
     steps:
