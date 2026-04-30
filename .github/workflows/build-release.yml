@@ -35,7 +35,7 @@ jobs:
       - name: Setup Git and persistent state for env variables
         id: git-setup
         run: |
-          export XDG_CONFIG_HOME=$(pwd)/tmp
+          export XDG_CONFIG_HOME=${XDG_CONFIG_HOME:-$(pwd)/tmp}
           mkdir -p ${XDG_CONFIG_HOME}/git
           echo ${XDG_CONFIG_HOME} >> "$GITHUB_ENV"
           git config --file ${XDG_CONFIG_HOME}/git/config user.name "github-actions[bot]"
