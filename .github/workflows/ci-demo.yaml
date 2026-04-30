@@ -16,7 +16,6 @@ jobs:
       - run: echo "💡 The ${{ github.repository }} repository has been cloned to the runner."
       - run: echo "🖥️ The workflow is now ready to test your code on the runner."
       - name: List files in the repository
-        id: set-env
         run: |
           ls ${{ github.workspace }}
           #env
@@ -25,6 +24,15 @@ jobs:
           echo
           echo "Version: $VERSIONID"
           echo "VERSIONID=$VERSIONID" >> "$GITHUB_ENV"
-          echo "VERSIONID=$VERSIONID" >> "$GITHUB_OUTPUT"
-      - run: echo "🍏 This job's status is ${{ job.status }} verson=${{ steps.set-env.outputs.VERSIONID }}."
+      - run: echo "🍏 This job's status is ${{ job.status }}."
       - run: echo "Which version is it? ${VERSIONID}"
+      - name: Setup Git
+        run: |
+          export XDG_CONFIG_HOME=${XDG_CONFIG_HOME:-$(pwd)/my}
+          mkdir -p ${XDG_CONFIG_HOME}/git
+          git config --file ${XDG_CONFIG_HOME}/git/config user.name "github-actions[bot]"
+          git config --file ${XDG_CONFIG_HOME}/git/config user.email "github-actions[bot]@users.noreply.github.com"
+          git config --file ${XDG_CONFIG_HOME}/git/config githubconf.env.env1 "XDG_CONFIG_HOME=${XDG_CONFIG_HOME}"
+          BASE_BRANCH=develop
+          git config --file ${XDG_CONFIG_HOME}/git/config githubconf.env.env2 "BASE_BRANCH=${BASE_BRANCH}"
+          git config --list --show-origin
