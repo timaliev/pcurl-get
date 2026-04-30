@@ -40,10 +40,10 @@ jobs:
           echo ${XDG_CONFIG_HOME} >> "$GITHUB_ENV"
           git config --file ${XDG_CONFIG_HOME}/git/config user.name "github-actions[bot]"
           git config --file ${XDG_CONFIG_HOME}/git/config user.email "github-actions[bot]@users.noreply.github.com"
-          git config --file ${XDG_CONFIG_HOME}/git/config github_conf.env.env1 "XDG_CONFIG_HOME=${XDG_CONFIG_HOME}"
+          git config --file ${XDG_CONFIG_HOME}/git/config githubconf.env.env1 "XDG_CONFIG_HOME=${XDG_CONFIG_HOME}"
           BASE_BRANCH=develop
           echo ${BASE_BRANCH} >> "$GITHUB_ENV"
-          git config --file ${XDG_CONFIG_HOME}/git/config github_conf.env.env2 "BASE_BRANCH=${BASE_BRANCH}"
+          git config --file ${XDG_CONFIG_HOME}/git/config githubconf.env.env2 "BASE_BRANCH=${BASE_BRANCH}"
           # CURRENT_BRANCH=${GITHUB_REF##*/} #-- now using ${{ github.ref_name }}
 
       - name: Detect new Release
@@ -59,7 +59,7 @@ jobs:
             NEW_RELEASE=1
           fi
           echo ${NEW_RELEASE} >> "$GITHUB_ENV"
-          git config --file ${XDG_CONFIG_HOME}/git/config github_conf.env.env3 "NEW_RELEASE=${NEW_RELEASE}"
+          git config --file ${XDG_CONFIG_HOME}/git/config githubconf.env.env3 "NEW_RELEASE=${NEW_RELEASE}"
 
       - name: Bump version for new release using git-cliff
         id: new-version
@@ -85,8 +85,8 @@ jobs:
 
       - name: Store version configuration in Git config
         run: |
-          git config --file ${XDG_CONFIG_HOME}/git/config github_conf.env.env4 "NEW_VERSION=${NEW_VERSION}"
-          git config --file ${XDG_CONFIG_HOME}/git/config github_conf.env.env5 "NEW_VERSION_TAG=${NEW_VERSION_TAG}"
+          git config --file ${XDG_CONFIG_HOME}/git/config githubconf.env.env4 "NEW_VERSION=${NEW_VERSION}"
+          git config --file ${XDG_CONFIG_HOME}/git/config githubconf.env.env5 "NEW_VERSION_TAG=${NEW_VERSION_TAG}"
 
       - name: Upload persistent Git configuration for later stages
         uses: actions/upload-artifact@v7
@@ -130,11 +130,11 @@ jobs:
       - name: Setup Git
         id: git-setup
         run: |
-          export $(git config --file tmp/git/config github_conf.env.env1)
-          export $(git config --file tmp/git/config github_conf.env.env2)
-          export $(git config --file tmp/git/config github_conf.env.env3)
-          export $(git config --file tmp/git/config github_conf.env.env4)
-          export $(git config --file tmp/git/config github_conf.env.env5)
+          export $(git config --file tmp/git/config githubconf.env.env1)
+          export $(git config --file tmp/git/config githubconf.env.env2)
+          export $(git config --file tmp/git/config githubconf.env.env3)
+          export $(git config --file tmp/git/config githubconf.env.env4)
+          export $(git config --file tmp/git/config githubconf.env.env5)
           echo ${XDG_CONFIG_HOME} >> "$GITHUB_ENV"
           echo ${BASE_BRANCH} >> "$GITHUB_ENV"
           echo ${NEW_RELEASE} >> "$GITHUB_ENV"
@@ -229,11 +229,11 @@ jobs:
       - name: Setup Git
         id: git-setup
         run: |
-          export $(git config --file tmp/git/config github_conf.env.env1)
-          export $(git config --file tmp/git/config github_conf.env.env2)
-          export $(git config --file tmp/git/config github_conf.env.env3)
-          export $(git config --file tmp/git/config github_conf.env.env4)
-          export $(git config --file tmp/git/config github_conf.env.env5)
+          export $(git config --file tmp/git/config githubconf.env.env1)
+          export $(git config --file tmp/git/config githubconf.env.env2)
+          export $(git config --file tmp/git/config githubconf.env.env3)
+          export $(git config --file tmp/git/config githubconf.env.env4)
+          export $(git config --file tmp/git/config githubconf.env.env5)
           echo ${XDG_CONFIG_HOME} >> "$GITHUB_ENV"
           echo ${BASE_BRANCH} >> "$GITHUB_ENV"
           echo ${NEW_RELEASE} >> "$GITHUB_ENV"

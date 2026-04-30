@@ -32,7 +32,7 @@ jobs:
           mkdir -p ${XDG_CONFIG_HOME}/git
           git config --file ${XDG_CONFIG_HOME}/git/config user.name "github-actions[bot]"
           git config --file ${XDG_CONFIG_HOME}/git/config user.email "github-actions[bot]@users.noreply.github.com"
-          git config --file ${XDG_CONFIG_HOME}/git/config github_conf.env.env1 "XDG_CONFIG_HOME=${XDG_CONFIG_HOME}"
+          git config --file ${XDG_CONFIG_HOME}/git/config githubconf.env.env1 "XDG_CONFIG_HOME=${XDG_CONFIG_HOME}"
           BASE_BRANCH=develop
-          git config --file ${XDG_CONFIG_HOME}/git/config github_conf.env.env2 "BASE_BRANCH=${BASE_BRANCH}"
+          git config --file ${XDG_CONFIG_HOME}/git/config githubconf.env.env2 "BASE_BRANCH=${BASE_BRANCH}"
           git config --list --show-origin

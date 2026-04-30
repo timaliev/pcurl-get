@@ -43,11 +43,11 @@ jobs:
       - name: Setup Git
         id: git-setup
         run: |
-          export $(git config --file tmp/git/config github_conf.env.env1)
-          export $(git config --file tmp/git/config github_conf.env.env2)
-          export $(git config --file tmp/git/config github_conf.env.env3)
-          export $(git config --file tmp/git/config github_conf.env.env4)
-          export $(git config --file tmp/git/config github_conf.env.env5)
+          export $(git config --file tmp/git/config githubconf.env.env1)
+          export $(git config --file tmp/git/config githubconf.env.env2)
+          export $(git config --file tmp/git/config githubconf.env.env3)
+          export $(git config --file tmp/git/config githubconf.env.env4)
+          export $(git config --file tmp/git/config githubconf.env.env5)
           echo ${XDG_CONFIG_HOME} >> "$GITHUB_ENV"
           echo ${BASE_BRANCH} >> "$GITHUB_ENV"
           echo ${NEW_RELEASE} >> "$GITHUB_ENV"
@@ -108,11 +108,11 @@ jobs:
       - name: Setup Git
         id: git-setup
         run: |
-          export $(git config --file tmp/git/config github_conf.env.env1)
-          export $(git config --file tmp/git/config github_conf.env.env2)
-          export $(git config --file tmp/git/config github_conf.env.env3)
-          export $(git config --file tmp/git/config github_conf.env.env4)
-          export $(git config --file tmp/git/config github_conf.env.env5)
+          export $(git config --file tmp/git/config githubconf.env.env1)
+          export $(git config --file tmp/git/config githubconf.env.env2)
+          export $(git config --file tmp/git/config githubconf.env.env3)
+          export $(git config --file tmp/git/config githubconf.env.env4)
+          export $(git config --file tmp/git/config githubconf.env.env5)
           echo ${XDG_CONFIG_HOME} >> "$GITHUB_ENV"
           echo ${BASE_BRANCH} >> "$GITHUB_ENV"
           echo ${NEW_RELEASE} >> "$GITHUB_ENV"
