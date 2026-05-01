@@ -13,7 +13,7 @@ permissions:
 
 jobs:
   pre-build:
-    if: ${{ (github.event_name == 'pull_request' && github.base_ref == 'release' && github.head_ref == 'develop') || (github.event_name == 'push' && github.ref_name == 'release') }}
+    if: (github.event_name == 'pull_request' && github.base_ref == 'release' && github.head_ref == 'develop') || (github.event_name == 'push' && github.ref_name == 'release')
     name: Prepare build and set new release version
     runs-on: ubuntu-latest
     steps:
@@ -61,10 +61,10 @@ jobs:
           # Detect existing Release if it's subsequent push to current branch
           if [ "$COMMITS_SINCE_BASE" -gt 1 ]; then
             NEW_RELEASE=0
-            echo "Running new Release job from ${{ github.head_ref }} to ${{ github.base_ref }}"
+            echo "Running new Release job on '${{ github.ref_name }}'"
           else
             NEW_RELEASE=1
-            echo "Running existing Release job from ${{ github.head_ref }} to ${{ github.base_ref }}"
+            echo "Running existing Release job on '${{ github.ref_name }}'"
           fi
           echo ${NEW_RELEASE} >> "$GITHUB_ENV"
           git config --file ${XDG_CONFIG_HOME}/git/config githubconf.env.env3 "NEW_RELEASE=${NEW_RELEASE}"
@@ -84,8 +84,8 @@ jobs:
         id: exist-version
         if: github.ref_name == 'release' && env.NEW_RELEASE == '0'
         run: |
-          NEW_VERSION_TAG="v$(cat VERSION)"
           NEW_VERSION="$(cat VERSION)"
+          NEW_VERSION_TAG="v${NEW_VERSION}"
           echo "New version tag: $NEW_VERSION_TAG"
           echo "New version: $NEW_VERSION"
           echo "NEW_VERSION=$NEW_VERSION_TAG" >> "$GITHUB_ENV"
@@ -256,7 +256,7 @@ jobs:
           # We are going to commit to this branch so update .gitignore
           touch .gitignore
           # Ensure tmp directory created for Git persistency is excluded
-          [ -z "$(grep -E '^tmp/' .gitignore)" ] && echo 'tmp/' >> .gitignore
+          [ -z "$(grep -E '^tmp/' .gitignore)" ] && echo 'tmp/' >> .gitignore || true
 
       - name: Create/update version tag
         run: |
