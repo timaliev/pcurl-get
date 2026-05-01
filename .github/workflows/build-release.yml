@@ -1,5 +1,5 @@
 name: PCurl-Get build
-run-name: ${{ github.event_name }} by @${{ github.actor }} (from ${{ github.head_ref }} to ${{ github.base_ref }})
+run-name: ${{ github.event_name }} by @${{ github.actor }} (from ${{ github.head_ref }} to ${{ github.base_ref }} or ${{ github.ref_name }})
 
 on:
   # workflow_dispatch:
