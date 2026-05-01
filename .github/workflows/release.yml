@@ -5,8 +5,8 @@ on:
   branch_protection_rule:
   push:
     branches: [ master ]
-    tags:
-      - "v*.*.*"
+    # tags:
+    #   - "v*.*.*"
 
 permissions:
   contents: write
@@ -15,6 +15,7 @@ permissions:
 
 jobs:
   just-release:
+    if: ${{ github.event_name == 'pull_request' && github.head_ref == 'release' }}
     name: Release software
     runs-on: ubuntu-latest
 
@@ -92,6 +93,7 @@ jobs:
 
   post-release:
     name: Merge release back onto development branch
+    needs: just-release
     runs-on: ubuntu-latest
     steps:
       - name: Checkout Repository
