@@ -1,4 +1,4 @@
-// tests.rs
+// tests/tests.rs
 // vim: set ft=rs
 //
 //! Comprehensive unit and integration tests for pcurl-get
@@ -12,6 +12,7 @@
 //! Run tests with: cargo test
 
 use anyhow::{Result, bail};
+use mockito::Mock;
 use reqwest::Client;
 use std::{io::Write, path::PathBuf, str::FromStr};
 use tempfile::{NamedTempFile, tempdir};
@@ -374,14 +375,16 @@ async fn fetch_url_concurrent_requests() -> Result<()> {
   let mut server = Server::new_async().await;
   let path = "/concurrent";
 
-  // Create 5 mock endpoints
+  // Create ENDPOINTSNUM mock endpoints
+  let mut mocks: Vec<Mock> = Vec::with_capacity(ENDPOINTSNUM.into());
   for i in 0..ENDPOINTSNUM {
-    let _mock = server
+    let mock = server
       .mock("GET", format!("{path}{i}").as_str())
       .with_body(format!("content{i}").as_bytes())
       .create_async()
       .await;
-  }
+    mocks.push(mock);
+  };
 
   let client = Client::builder().build()?;
 
@@ -399,6 +402,9 @@ async fn fetch_url_concurrent_requests() -> Result<()> {
   for handle in handles {
     let result = handle.await;
     assert!(result.is_ok(), "Concurrent request failed");
+  }
+  for mock in mocks {
+    mock.assert_async().await;
   }
 
   Ok(())
@@ -590,7 +596,7 @@ async fn main_with_save_option() -> Result<()> {
       hex::encode(hasher.finalize())
     );
     let path = PathBuf::from_str(filename.as_str())?;
-    eprintln!("File path to read: {}", path.to_string_lossy());
+    // eprintln!("File path to read: {}", path.to_string_lossy());
     let mut file = File::open(&path).await?;
     let mut contents = Vec::new();
     let _ = file.read_to_end(&mut contents).await;
