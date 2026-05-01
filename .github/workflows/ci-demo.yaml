@@ -39,5 +39,5 @@ jobs:
           echo "List of Git config values and it's origins:"
           git config --list --show-origin
           echo
-          export $(git config --file tmp/git/config githubconf.env.env2)
+          export $(git config --file ${XDG_CONFIG_HOME}/git/config githubconf.env.env2)
           echo BASE_BRANCH = ${BASE_BRANCH}
