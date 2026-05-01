@@ -14,9 +14,9 @@ jobs:
       - run: echo "🔎 The name of your branch is ${{ github.ref_name }} (${{ github.ref }}) and your repository is ${{ github.repository }}."
       - run: |
           if [ "${{ github.event_name }}" = "pull_request" ]; then
-            echo "🔎 The name of base branch is ${{ github.base_ref }} head branch is ${{ github.head_ref }})"
+            echo "🔎 The name of base branch is '${{ github.base_ref }}' head branch is '${{ github.head_ref }}'"
           else
-            echo "This is ${{ github.event_name }} to ${{ github.ref }}"
+            echo "This is a '${{ github.event_name }}' to '${{ github.ref }}'"
           fi
       - name: Check out repository code
         uses: actions/checkout@v5
