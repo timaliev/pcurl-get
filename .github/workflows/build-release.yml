@@ -2,7 +2,7 @@ name: PCurl-Get build
 run-name: ${{ github.event_name }} by @${{ github.actor }} (from ${{ github.head_ref }} to ${{ github.base_ref }})
 
 on:
-  workflow_dispatch:
+  # workflow_dispatch:
   push:
     branches: [ release ]
 
@@ -13,7 +13,7 @@ permissions:
 
 jobs:
   pre-build:
-    if: ${{ github.event_name == 'pull_request' && github.base_ref == 'release' && github.head_ref == 'develop' }}
+    if: ${{ (github.event_name == 'pull_request' && github.base_ref == 'release' && github.head_ref == 'develop') || (github.event_name == 'push' && github.ref_name == 'release') }}
     name: Prepare build and set new release version
     runs-on: ubuntu-latest
     steps:
