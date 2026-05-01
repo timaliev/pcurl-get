@@ -13,8 +13,11 @@ jobs:
       - run: echo "🐧 This job is now running on a ${{ runner.os }} server hosted by GitHub!"
       - run: echo "🔎 The name of your branch is ${{ github.ref_name }} (${{ github.ref }}) and your repository is ${{ github.repository }}."
       - run: |
-          [ "${{ github.event_name }}" = "pull_request" ]
-          echo "🔎 The name of base branch is ${{ github.base_ref }} head branch is ${{ github.head_ref }})"
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            echo "🔎 The name of base branch is ${{ github.base_ref }} head branch is ${{ github.head_ref }})"
+          else
+            echo "This is ${{ github.event_name }} to ${{ github.ref }}"
+          fi
       - name: Check out repository code
         uses: actions/checkout@v5
       - run: echo "💡 The ${{ github.repository }} repository has been cloned to the runner."
