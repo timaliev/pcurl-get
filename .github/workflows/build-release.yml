@@ -1,5 +1,5 @@
 name: PCurl-Get build
-run-name: ${{ github.event_name }} by @${{ github.actor }} (from ${{ github.head_ref }} to ${{ github.base_ref }} or ${{ github.ref_name }})
+run-name: ${{ github.event_name }} by @${{ github.actor }} to ${{ github.ref_name }}
 
 on:
   # workflow_dispatch:
@@ -10,10 +10,12 @@ permissions:
   contents: write
   pull-requests: write
   actions: write
+  id-token: write
+  attestations: write
 
 jobs:
   pre-build:
-    if: (github.event_name == 'pull_request' && github.base_ref == 'release' && github.head_ref == 'develop') || (github.event_name == 'push' && github.ref_name == 'release')
+    if: github.event_name == 'push' && github.ref_name == 'release'
     name: Prepare build and set new release version
     runs-on: ubuntu-latest
     steps:
@@ -21,6 +23,23 @@ jobs:
         uses: actions/checkout@v6
         with:
           fetch-depth: 0
+          fetch-tags: true
+
+      - name: Where to store persistent Git configuration
+        run: |
+          touch .github/config
+          cat <<EOF | tee -a .git/config >/dev/null
+          # Persistent Git configuration added to .git/config
+          [include]
+              path = ${{ github.workspace }}/.github/config
+          EOF
+
+      - name: Setup Git from persistent configuration
+        id: git-setup
+        run: |
+          export "GITHUBCONF=${{ github.workspace }}/.github/config"
+          echo -e "Git persistent state for env file is: ${GITHUBCONF}"
+          echo "GITHUBCONF=${GITHUBCONF}" >> "$GITHUB_ENV"
 
       - name: Setup Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -33,24 +52,23 @@ jobs:
       - name: Setup git-cliff
         run: |
           # Get git-cliff for this platform
-          cargo install git-cliff
+          cargo +stable install git-cliff
           # Generate default configuration if repository doesn't have one
-          [ -f cliff.toml ] || git-cliff --init
+          if [ -f cliff.toml ]; then
+            echo "git-cliff configuration $(pwd)/cliff.toml is present in this repository ('${{ github.repository }}' on '${{ github.ref_name }}' branch)"
+          else
+            git-cliff --init
+            echo "Created git-cliff default configuration: $(pwd)/cliff.toml"
+          fi
 
-      - name: Setup Git and persistent state for env variables
-        id: git-setup
+      - name: Setup env variables in persistent Git configuration
+        id: git-setup-env
         run: |
-          echo XDG_CONFIG_HOME="${XDG_CONFIG_HOME}"
-          XDG_CONFIG_HOME="${XDG_CONFIG_HOME:-$(pwd)/tmp}"
-          mkdir -p ${XDG_CONFIG_HOME}/git
-          echo ${XDG_CONFIG_HOME} >> "$GITHUB_ENV"
-          git config --file ${XDG_CONFIG_HOME}/git/config user.name "github-actions[bot]"
-          git config --file ${XDG_CONFIG_HOME}/git/config user.email "github-actions[bot]@users.noreply.github.com"
-          git config --file ${XDG_CONFIG_HOME}/git/config githubconf.env.env1 "XDG_CONFIG_HOME=${XDG_CONFIG_HOME}"
+          git config --file ${GITHUBCONF} user.name "github-actions[bot]"
+          git config --file ${GITHUBCONF} user.email "github-actions[bot]@users.noreply.github.com"
           BASE_BRANCH=develop
-          echo ${BASE_BRANCH} >> "$GITHUB_ENV"
-          git config --file ${XDG_CONFIG_HOME}/git/config githubconf.env.env2 "BASE_BRANCH=${BASE_BRANCH}"
-          # CURRENT_BRANCH=${GITHUB_REF##*/} #-- now using ${{ github.ref_name }}
+          echo "BASE_BRANCH=${BASE_BRANCH}" >> "$GITHUB_ENV"
+          git config --file ${GITHUBCONF} githubconf.env.env2 "BASE_BRANCH=${BASE_BRANCH}"
 
       - name: Detect new Release
         id: is-new-release
@@ -59,116 +77,167 @@ jobs:
           MERGE_BASE=$(git merge-base HEAD origin/$BASE_BRANCH 2>/dev/null || echo "$(git rev-parse HEAD)")
           COMMITS_SINCE_BRANCH=$(git rev-list --count $MERGE_BASE..HEAD)
           # Detect existing Release if it's subsequent push to current branch
-          if [ "$COMMITS_SINCE_BASE" -gt 1 ]; then
+          if [ "${COMMITS_SINCE_BRANCH}" -gt 1 ]; then
             NEW_RELEASE=0
-            echo "Running new Release job on '${{ github.ref_name }}'"
+            echo "COMMITS_SINCE_BRANCH=${COMMITS_SINCE_BRANCH}"
+            echo "Running existing Release job on '${{ github.ref_name }}'"
           else
             NEW_RELEASE=1
-            echo "Running existing Release job on '${{ github.ref_name }}'"
+            echo "COMMITS_SINCE_BRANCH=${COMMITS_SINCE_BRANCH}"
+            echo "Running new Release job on '${{ github.ref_name }}'"
           fi
-          echo ${NEW_RELEASE} >> "$GITHUB_ENV"
-          git config --file ${XDG_CONFIG_HOME}/git/config githubconf.env.env3 "NEW_RELEASE=${NEW_RELEASE}"
+          echo "NEW_RELEASE=${NEW_RELEASE}" >> "$GITHUB_ENV"
+          git config --file ${GITHUBCONF} githubconf.env.env3 "NEW_RELEASE=${NEW_RELEASE}"
+          if [ -f VERSION ]; then
+            echo "HAS_VERSION_FILE=1" >> "$GITHUB_ENV"
+          else
+            echo "HAS_VERSION_FILE=0" >> "$GITHUB_ENV"
+          fi
 
       - name: Bump version for new release using git-cliff
         id: new-version
-        if: github.ref_name == 'release' && env.NEW_RELEASE == '1'
+        if: env.NEW_RELEASE == '1' || env.HAS_VERSION_FILE == '0'
         run: |
           NEW_VERSION_TAG="$(git-cliff --bumped-version)"
           NEW_VERSION=$(echo ${NEW_VERSION_TAG} | sed -E 's/^v//')
           echo "New version tag: $NEW_VERSION_TAG"
           echo "New version: $NEW_VERSION"
-          echo "NEW_VERSION=$NEW_VERSION_TAG" >> "$GITHUB_ENV"
+          echo "NEW_VERSION_TAG=$NEW_VERSION_TAG" >> "$GITHUB_ENV"
           echo "NEW_VERSION=$NEW_VERSION" >> "$GITHUB_ENV"
 
       - name: Use the same version for existing release
         id: exist-version
-        if: github.ref_name == 'release' && env.NEW_RELEASE == '0'
+        if: env.NEW_RELEASE == '0' && env.HAS_VERSION_FILE == '1'
         run: |
           NEW_VERSION="$(cat VERSION)"
           NEW_VERSION_TAG="v${NEW_VERSION}"
           echo "New version tag: $NEW_VERSION_TAG"
           echo "New version: $NEW_VERSION"
-          echo "NEW_VERSION=$NEW_VERSION_TAG" >> "$GITHUB_ENV"
+          echo "NEW_VERSION_TAG=$NEW_VERSION_TAG" >> "$GITHUB_ENV"
           echo "NEW_VERSION=$NEW_VERSION" >> "$GITHUB_ENV"
 
       - name: Store version configuration in Git config
         run: |
-          git config --file ${XDG_CONFIG_HOME}/git/config githubconf.env.env4 "NEW_VERSION=${NEW_VERSION}"
-          git config --file ${XDG_CONFIG_HOME}/git/config githubconf.env.env5 "NEW_VERSION_TAG=${NEW_VERSION_TAG}"
+          git config --file ${GITHUBCONF} githubconf.env.env4 "NEW_VERSION=${NEW_VERSION}"
+          git config --file ${GITHUBCONF} githubconf.env.env5 "NEW_VERSION_TAG=${NEW_VERSION_TAG}"
+          git config --file ${GITHUBCONF} githubconf.env.env6 "RELEASE_RUN_ID=${{ github.run_id }}"
 
-      - name: Upload persistent Git configuration for later stages
-        uses: actions/upload-artifact@v7
-        with:
-          name: gitconfig
-          path: tmp/git/config
+      - name: Save persistent Git configuration for later stages
+        run: |
+          # ls
+          git add .github/config
+          git commit -m "chore(github): store persistent state for GitHub Actions (run ID=${RELEASE_RUN_ID})" -- .github/config
+          git push --force
 
   build-for-release:
-    name: Build for Release on matrix targets
+    name: Build for Release
     needs: pre-build
-    runs-on: ${{ matrix.os }}
+    runs-on: ${{ matrix.build.OS }}
     outputs:
       upload-artifact-id: ${{ steps.artifact-upload.outputs.artifact-upload }}
     strategy:
       fail-fast: false
       matrix:
-        os: [macos-latest, ubuntu-latest]
-        include:
-          - os: macos-latest
-            target: aarch64-apple-darwin
-            architecture: aarch64
-          - os: ubuntu-latest
-            target: x86_64-unknown-linux-musl
-            architecture: x86_64
-          - os: ubuntu-latest
-            target: aarch64-unknown-linux-musl
-            architecture: aarch64
+        build:
+          - {
+              NAME: linux-x64-glibc,
+              OS: ubuntu-22.04,
+              TOOLCHAIN: stable,
+              TARGET: x86_64-unknown-linux-gnu,
+            }
+          - {
+              NAME: linux-x64-musl,
+              OS: ubuntu-22.04,
+              TOOLCHAIN: stable,
+              TARGET: x86_64-unknown-linux-musl,
+            }
+          - {
+              NAME: linux-x86-glibc,
+              OS: ubuntu-22.04,
+              TOOLCHAIN: stable,
+              TARGET: i686-unknown-linux-gnu,
+            }
+          - {
+              NAME: linux-x86-musl,
+              OS: ubuntu-22.04,
+              TOOLCHAIN: stable,
+              TARGET: i686-unknown-linux-musl,
+            }
+          - {
+              NAME: linux-arm64-glibc,
+              OS: ubuntu-22.04,
+              TOOLCHAIN: stable,
+              TARGET: aarch64-unknown-linux-gnu,
+            }
+          - {
+              NAME: linux-arm64-musl,
+              OS: ubuntu-22.04,
+              TOOLCHAIN: stable,
+              TARGET: aarch64-unknown-linux-musl,
+            }
+          - {
+              NAME: darwin-x64,
+              OS: macos-15,
+              TOOLCHAIN: stable,
+              TARGET: x86_64-apple-darwin,
+            }
+          - {
+              NAME: darwin-arm64,
+              OS: macos-15,
+              TOOLCHAIN: stable,
+              TARGET: aarch64-apple-darwin,
+            }
 
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v6
         with:
           fetch-depth: 0
-
-      - name: Download persistent Git configuration
-        uses: actions/download-artifact@v8
-        with:
-          name: gitconfig
-          path: tmp/git/
+          fetch-tags: true
           
-      - name: Setup Git
+      - name: Where to store persistent Git configuration
+        run: |
+          touch .github/config
+          cat <<EOF | tee -a .git/config >/dev/null
+          # Persistent Git configuration added to .git/config
+          [include]
+              path = ${{ github.workspace }}/.github/config
+          EOF
+
+      - name: Setup Git from persistent configuration
         id: git-setup
         run: |
-          export $(git config --file tmp/git/config githubconf.env.env1)
-          export $(git config --file tmp/git/config githubconf.env.env2)
-          export $(git config --file tmp/git/config githubconf.env.env3)
-          export $(git config --file tmp/git/config githubconf.env.env4)
-          export $(git config --file tmp/git/config githubconf.env.env5)
-          echo ${XDG_CONFIG_HOME} >> "$GITHUB_ENV"
-          echo ${BASE_BRANCH} >> "$GITHUB_ENV"
-          echo ${NEW_RELEASE} >> "$GITHUB_ENV"
-          echo ${NEW_VERSION} >> "$GITHUB_ENV"
-          echo ${NEW_VERSION_TAG} >> "$GITHUB_ENV"
+          export "GITHUBCONF=${{ github.workspace }}/.github/config"
+          echo -e "Git persistent state for env file is: ${GITHUBCONF}"
+          echo "GITHUBCONF=${GITHUBCONF}" >> "$GITHUB_ENV"
+          export $(git config githubconf.env.env2)
+          export $(git config githubconf.env.env3)
+          export $(git config githubconf.env.env4)
+          export $(git config githubconf.env.env5)
+          echo "BASE_BRANCH=${BASE_BRANCH}" >> "$GITHUB_ENV"
+          echo "NEW_RELEASE=${NEW_RELEASE}" >> "$GITHUB_ENV"
+          echo "NEW_VERSION=${NEW_VERSION}" >> "$GITHUB_ENV"
+          echo "NEW_VERSION_TAG=${NEW_VERSION_TAG}" >> "$GITHUB_ENV"
 
-      - name: Setup Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+      - name: Install Rust toolchain
+        uses: actions-rs/toolchain@16499b5e05bf2e26879000db0c1d13f7e13fa3af # v1.0.7
         with:
-          targets: ${{ matrix.target }}
-          components: clippy, rustfmt
+          toolchain: ${{ matrix.build.TOOLCHAIN }}
+          target: ${{ matrix.build.TARGET }}
+          override: true
 
-      - name: Install musl-tools for static linking
-        if: matrix.target == 'x86_64-unknown-linux-musl' || matrix.target == 'aarch64-unknown-linux-musl'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            --allow-unauthenticated \
-            musl-tools gcc-aarch64-linux-gnu musl-dev
-          rustup target add ${{ matrix.target }}
+      - name: Cache cargo build
+        uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
 
-      - name: Install cross-compilation dependencies (macOS)
-        if: matrix.os == 'macos-latest'
+      - name: Install dependencies (macOS)
+        if: matrix.build.OS == 'macos-15'
         run: |
-          brew install musl-cross
-          rustup target add ${{ matrix.target }}
+          brew install gsed
+          # uname -a
+          # echo $PATH
+          # rustup target add ${{ matrix.build.TARGET }}
 
       - name: Setup build tools
         id: build-tools
@@ -184,29 +253,56 @@ jobs:
           # echo "tool-path=$(pwd)/cargo_version" >> $GITHUB_ENV
 
       - name: Update version in Cargo.toml (${{ env.NEW_VERSION_TAG }})
-        if: github.ref_name == 'release' && env.NEW_RELEASE == '1'
         run: |
-          sed -E -i "s/^version = \"[^\"]*\"/version = \"${NEW_VERSION}\"/" Cargo.toml
+          if [[ "${{ matrix.build.OS }}" = "macos-"* ]]; then
+            # brew install gsed
+            gsed -E -i "s/^version = \"[^\"]*\"/version = \"${NEW_VERSION}\"/" Cargo.toml
+            sed -E "s/^version = \"[^\"]*\"/version = \"${NEW_VERSION}\"/" Cargo.toml | grep version
+          else
+            sed -E -i "s/^version = \"[^\"]*\"/version = \"${NEW_VERSION}\"/" Cargo.toml
+            grep -E '^version =' Cargo.toml
+          fi
 
-      - name: Cache cargo build
-        uses: Swatinem/rust-cache@v2
-        with:
-          cache-on-failure: true
+      - name: Install dependencies
+        shell: bash
+        run: |
+          if [[ "${{ matrix.build.NAME }}" = *"-musl" ]]; then
+            sudo apt-get update
+            sudo apt-get install -y \
+              --no-install-recommends \
+              --allow-unauthenticated \
+              musl-tools
+          fi
 
-      - name: Tests on ${{ matrix.architecture }}
+      - name: Tests on ${{ matrix.build.TARGET }}
         run: |
           cargo test --all
 
-      - name: Build for ${{ matrix.architecture }}
-        run: |
-          cargo build --release --target ${{ matrix.target }}
+      - name: Build (on ${{ matrix.build.OS }} for ${{ matrix.build.TARGET }})
+        if: matrix.build.OS != 'windows-2025'
+        uses: actions-rs/cargo@844f36862e911db73fe0815f00a4a2602c279505 # v1.0.3
+        with:
+          use-cross: true
+          command: build
+          args: --release --locked --target ${{ matrix.build.TARGET }}
 
-      - name: Upload artifacts
+      - name: Prepare binaries for release
+        run: |
+          mkdir -p tmp/release
+          mv target/${{ matrix.build.TARGET }}/release/pcurl-get \
+            tmp/release/pcurl-get-${{ matrix.build.TARGET }}
+
+      - name: Generate artifact attestation
+        uses: actions/attest@v4
+        with:
+          subject-path: tmp/release/pcurl-get-${{ matrix.build.TARGET }}
+
+      - name: Upload artifacts for ${{ matrix.build.TARGET }}
         uses: actions/upload-artifact@v7
         id: artifact-upload
         with:
-          name: pcurl-get-${{ matrix.target }}
-          path: target/${{ matrix.target }}/release/pcurl-get
+          name: pcurl-get-${{ matrix.build.TARGET }}
+          path: tmp/release/pcurl-get-${{ matrix.build.TARGET }}
           if-no-files-found: warn
 
   prep-release:
@@ -218,6 +314,38 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          fetch-tags: true
+          
+      - name: Where to store persistent Git configuration
+        run: |
+          touch .github/config
+          cat <<EOF | tee -a .git/config >/dev/null
+          # Persistent Git configuration added to .git/config
+          [include]
+              path = ${{ github.workspace }}/.github/config
+          EOF
+
+      - name: Setup Git from persistent configuration
+        id: git-setup
+        run: |
+          export "GITHUBCONF=${{ github.workspace }}/.github/config"
+          echo -e "Git persistent state for env file is: ${GITHUBCONF}"
+          echo "GITHUBCONF=${GITHUBCONF}" >> "$GITHUB_ENV"
+          export $(git config githubconf.env.env2)
+          export $(git config githubconf.env.env3)
+          export $(git config githubconf.env.env4)
+          export $(git config githubconf.env.env5)
+          echo "BASE_BRANCH=${BASE_BRANCH}" >> "$GITHUB_ENV"
+          echo "NEW_RELEASE=${NEW_RELEASE}" >> "$GITHUB_ENV"
+          echo "NEW_VERSION=${NEW_VERSION}" >> "$GITHUB_ENV"
+          echo "NEW_VERSION_TAG=${NEW_VERSION_TAG}" >> "$GITHUB_ENV"
+          # We are going to commit to this branch so update .gitignore if needed
+          touch .gitignore
+          # Ensure tmp directory used for GitHub workflows is excluded
+          if [ -z "$(grep -E '^tmp/' .gitignore)" ]; then
+            echo >> .gitignore
+            echo 'tmp/' >> .gitignore
+          fi
 
       - name: Setup Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -230,41 +358,25 @@ jobs:
       - name: Setup git-cliff
         run: |
           # Get git-cliff for this platform
-          cargo install git-cliff
+          cargo  +stable install git-cliff
           # Generate default configuration if repository doesn't have one
-          [ -f cliff.toml ] || git-cliff --init
-
-      - name: Download persistent Git configuration
-        uses: actions/download-artifact@v8
-        with:
-          name: gitconfig
-          path: tmp/git/
-
-      - name: Setup Git
-        id: git-setup
-        run: |
-          export $(git config --file tmp/git/config githubconf.env.env1)
-          export $(git config --file tmp/git/config githubconf.env.env2)
-          export $(git config --file tmp/git/config githubconf.env.env3)
-          export $(git config --file tmp/git/config githubconf.env.env4)
-          export $(git config --file tmp/git/config githubconf.env.env5)
-          echo ${XDG_CONFIG_HOME} >> "$GITHUB_ENV"
-          echo ${BASE_BRANCH} >> "$GITHUB_ENV"
-          echo ${NEW_RELEASE} >> "$GITHUB_ENV"
-          echo ${NEW_VERSION} >> "$GITHUB_ENV"
-          echo ${NEW_VERSION_TAG} >> "$GITHUB_ENV"
-          # We are going to commit to this branch so update .gitignore
-          touch .gitignore
-          # Ensure tmp directory created for Git persistency is excluded
-          [ -z "$(grep -E '^tmp/' .gitignore)" ] && echo 'tmp/' >> .gitignore || true
+          if [ -f cliff.toml ]; then
+            echo "git-cliff configuration $(pwd)/cliff.toml is present in this repository ('${{ github.repository }}' on '${{ github.ref_name }}' branch)"
+          else
+            git-cliff --init
+            echo "Created git-cliff default configuration: $(pwd)/cliff.toml"
+          fi
 
       - name: Create/update version tag
         run: |
-          # git describe --tags --abbrev=0 HEAD^ 2>/dev/null
+          git describe --tags --abbrev=0 HEAD^ 2>/dev/null
           # Ensure tag does not exist
           git tag -d "${NEW_VERSION_TAG}" 2>/dev/null || true
+          git push --tags || true
+          sleep 10
           # Add new tag for release
           git tag -f -a "${NEW_VERSION_TAG}" -m "Release ${NEW_VERSION_TAG}"
+          git push --tags || true
           # Create VERSION file in the root of repo for possible subsequent pushes to this release
           echo ${NEW_VERSION} > VERSION
 
@@ -272,18 +384,27 @@ jobs:
         id: changelog
         run: |
           echo "Generating CHANGELOG.md..."
-          git-cliff -output CHANGELOG.md
+          git-cliff --output CHANGELOG.md
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Commit and push release changes
+      - name: "Upload artifacts for debug: CHANGELOG.md"
+        uses: actions/upload-artifact@v7
+        id: artifact-upload
+        with:
+          name: CHANGELOG-${{ env.NEW_VERSION_TAG }}.md
+          path: CHANGELOG.md
+          if-no-files-found: error
+
+      - name: Commit release changes
         run: |
-          git commit -m "chore: for release ${NEW_VERSION_TAG}" -- VERSION CHANGELOG.md
-          # git push --tags
+          git add VERSION CHANGELOG.md
+          git commit -m "chore(version): for release ${NEW_VERSION_TAG}" -- VERSION CHANGELOG.md
           # git push --tags origin ${{ github.ref_name }}
           # Push will be performed by next step: peter-evans/create-pull-request@v5
 
       - name: Create PR from release to master
+        id: release-pr
         uses: peter-evans/create-pull-request@v8
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
@@ -311,6 +432,14 @@ jobs:
           draft: false
           delete-branch: true
 
+      - name: Save persistent Git configuration for later stages
+        run: |
+          git config --file ${GITHUBCONF} githubconf.env.env7 "RELEASE_PR_ID=${{ steps.release-pr.outputs.pull-request-number }}"
+          # ls
+          git add .github/config
+          git commit -m "chore(github): store persistent state for GitHub Actions +env7 (run ID=${RELEASE_RUN_ID})" -- .github/config
+          git push --force
+
   notify:
     needs: [pre-build, build-for-release, prep-release]
     if: always()
@@ -318,8 +447,8 @@ jobs:
     steps:
       - name: Notify
         run: |
-          if [[ "${{ job.status }}" == "success" ]]; then
+          if [[ "${{ needs.prep-release.result }}" == "success" ]]; then
             echo "✅ Workflow succeeded"
           else
-            echo "❌ Workflow failed: ${{ job.status }}"
+            echo "❌ Workflow failed: ${{ needs.prep-release.result }}"
           fi
