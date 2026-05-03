@@ -92,6 +92,7 @@ jobs:
             })
 
       - name: Wait for cancellation
+        if: steps.last-commit-tag.outputs.cancel_workflow == 'true'
         uses: actions/github-script@v7
         with:
           script: |
