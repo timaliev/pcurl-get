@@ -36,7 +36,7 @@ jobs:
           echo
           echo "Version: $VERSIONID"
           # echo "VERSIONID=$VERSIONID" >> "$GITHUB_ENV"
-          echo "$VERSIONID" >> "$GITHUB_ENV"
+          echo "VERSIONID=$VERSIONID" >> "$GITHUB_ENV"
       - run: echo "🍏 This job's status is ${{ job.status }}."
       - run: echo "Which version is it? ${VERSIONID}"
       - name: Where to store persistent Git configuration
@@ -49,10 +49,12 @@ jobs:
           EOF
       - name: Setup Git
         run: |
-          echo -e "Git persistent state for env file is: ${{ github.workspace }}/.github/config"
-          echo "GITHUBCONF=${{ github.workspace }}/.github/config" >> "$GITHUB_ENV"
-          git config --file ${GITHUBCONF}  user.name "github-actions[bot]"
-          git config --file ${GITHUBCONF}  user.email "github-actions[bot]@users.noreply.github.com"
+          export "GITHUBCONF=${{ github.workspace }}/.github/config"
+          echo -e "Git persistent state for env file is: ${GITHUBCONF}"
+          echo "GITHUBCONF=${GITHUBCONF}" >> "$GITHUB_ENV"
+          touch ${GITHUBCONF}
+          git config --file ${GITHUBCONF} user.name "github-actions[bot]"
+          git config --file ${GITHUBCONF} user.email "github-actions[bot]@users.noreply.github.com"
           BASE_BRANCH1=develop
           git config --file ${GITHUBCONF} githubconf.env.env2 "BASE_BRANCH=${BASE_BRANCH1}"
           echo
@@ -79,8 +81,10 @@ jobs:
     steps:
       - name: Verify status of the previous job
         run: |
-          if [ "${{ needs.Another-Job.result }}" = "success" ]; then
-            echo "✅ Successful workflow execution"
+          if [ "${{ needs.Explore-GitHub-Actions.result }}" = "success" ]; then
+            echo "✅ Successful workflow execution:"
+            echo "Workflow execution Explore-GitHub-Actions finish with status: ${{ needs.Explore-GitHub-Actions.result }}"
+            echo "Workflow execution Another-Job finish with status: ${{ needs.Another-Job.result }}"            
           else
             echo "❌ Workflow execution Explore-GitHub-Actions finish with status: ${{ needs.Explore-GitHub-Actions.result }}"
             echo "❌ Workflow execution Another-Job finish with status: ${{ needs.Another-Job.result }}"

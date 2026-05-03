@@ -17,7 +17,7 @@ jobs:
     name: Check if commits to be released are pushed
     runs-on: ubuntu-latest
     outputs:
-      cancel_workflow: ${{ steps.last-commit-tag.outputs.cancel_workflow }}
+      cancel_workflow: ${{ steps.last-commit-tag.outputs.cancel_workflow == 'true' }}
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v6
@@ -38,7 +38,8 @@ jobs:
         id: git-setup
         run: |
           echo -e "Git persistent state for env file is: ${{ github.workspace }}/.github/config"
-          echo "GITHUBCONF=${{ github.workspace }}/.github/config" >> "$GITHUB_ENV"
+          export "GITHUBCONF=${{ github.workspace }}/.github/config"
+          echo "GITHUBCONF=${GITHUBCONF}" >> "$GITHUB_ENV"
           export $(git config githubconf.env.env5)
           echo "NEW_VERSION_TAG=${NEW_VERSION_TAG}" >> "$GITHUB_ENV"
 
@@ -100,8 +101,9 @@ jobs:
       - name: Setup Git
         id: git-setup
         run: |
-          echo -e "Git persistent state for env file is: ${{ github.workspace }}/.github/config"
-          echo "GITHUBCONF=${{ github.workspace }}/.github/config" >> "$GITHUB_ENV"
+          export "GITHUBCONF=${{ github.workspace }}/.github/config"
+          echo -e "Git persistent state for env file is: ${GITHUBCONF}"
+          echo "GITHUBCONF=${GITHUBCONF}" >> "$GITHUB_ENV"
           export $(git config githubconf.env.env2)
           export $(git config githubconf.env.env3)
           export $(git config githubconf.env.env4)
