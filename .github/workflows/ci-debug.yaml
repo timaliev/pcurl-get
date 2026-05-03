@@ -3,8 +3,7 @@ run-name: "@${{ github.actor }} is testing out GitHub Actions 🚀 (${{ github.a
 on:
   push:
   pull_request:
-  pull_request_review:
-    types: [submitted]
+    types: [closed]
   workflow_dispatch:
 
 jobs:
@@ -21,7 +20,9 @@ jobs:
           else
             echo "This is a '${{ github.event_name }}' to '${{ github.ref }}'"
           fi
-      - run: echo "github.event.review.state = ${{ github.event.review.state }}"
+      - run: |
+          echo "github.event:"
+          echo "${{ github.event }}" | jq . || true
       - name: Check out repository code
         uses: actions/checkout@v5
       - run: echo "💡 The ${{ github.repository }} repository has been cloned to the runner."
@@ -34,21 +35,54 @@ jobs:
           VERSIONID=$(cat /etc/os-release | grep VERSION_ID | cut -d'=' -f2)
           echo
           echo "Version: $VERSIONID"
-          echo "VERSIONID=$VERSIONID" >> "$GITHUB_ENV"
+          # echo "VERSIONID=$VERSIONID" >> "$GITHUB_ENV"
+          echo "$VERSIONID" >> "$GITHUB_ENV"
       - run: echo "🍏 This job's status is ${{ job.status }}."
       - run: echo "Which version is it? ${VERSIONID}"
+      - name: Where to store persistent Git configuration
+        run: |
+          touch .github/config
+          cat <<EOF | tee -a .git/config >/dev/null
+          # Persistent Git configuration added to .git/config
+          [include]
+              path = ${{ github.workspace }}/.github/config
+          EOF
       - name: Setup Git
         run: |
-          export XDG_CONFIG_HOME=${XDG_CONFIG_HOME:-$(pwd)/my}
-          mkdir -p ${XDG_CONFIG_HOME}/git
-          git config --file ${XDG_CONFIG_HOME}/git/config user.name "github-actions[bot]"
-          git config --file ${XDG_CONFIG_HOME}/git/config user.email "github-actions[bot]@users.noreply.github.com"
-          git config --file ${XDG_CONFIG_HOME}/git/config githubconf.env.env1 "XDG_CONFIG_HOME=${XDG_CONFIG_HOME}"
+          echo -e "Git persistent state for env file is: ${{ github.workspace }}/.github/config"
+          echo "GITHUBCONF=${{ github.workspace }}/.github/config" >> "$GITHUB_ENV"
+          git config --file ${GITHUBCONF}  user.name "github-actions[bot]"
+          git config --file ${GITHUBCONF}  user.email "github-actions[bot]@users.noreply.github.com"
           BASE_BRANCH1=develop
-          git config --file ${XDG_CONFIG_HOME}/git/config githubconf.env.env2 "BASE_BRANCH=${BASE_BRANCH1}"
+          git config --file ${GITHUBCONF} githubconf.env.env2 "BASE_BRANCH=${BASE_BRANCH1}"
           echo
           echo "List of Git config values and it's origins:"
           git config --list --show-origin
           echo
-          export $(git config --file tmp/git/config githubconf.env.env2)
+          export $(git config --file ${GITHUBCONF} githubconf.env.env2)
           echo BASE_BRANCH = ${BASE_BRANCH}
+          echo "Content of Git configuration:"
+          cat ${GITHUBCONF}
+
+  Another-Job:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Some actions
+        run: |
+          echo "Failing job running in parallel"
+          exit 1
+
+  Check-status:
+    needs: [Explore-GitHub-Actions, Another-Job]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Verify status of the previous job
+        run: |
+          if [ "${{ needs.Another-Job.result }}" = "success" ]; then
+            echo "✅ Successful workflow execution"
+          else
+            echo "❌ Workflow execution Explore-GitHub-Actions finish with status: ${{ needs.Explore-GitHub-Actions.result }}"
+            echo "❌ Workflow execution Another-Job finish with status: ${{ needs.Another-Job.result }}"
+            exit 1
+          fi

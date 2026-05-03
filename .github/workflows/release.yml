@@ -4,8 +4,8 @@ run-name: ${{ github.event_name }} by @${{ github.actor }}
 on:
   push:
     branches: [ master ]
-    # tags:
-    #   - "v*.*.*"
+    tags:
+      - "v*.*.*"
 
 permissions:
   contents: write
@@ -13,16 +13,105 @@ permissions:
   actions: write
 
 jobs:
+  check-release:
+    name: Check if commits to be released are pushed
+    runs-on: ubuntu-latest
+    outputs:
+      cancel_workflow: ${{ steps.last-commit-tag.outputs.cancel_workflow }}
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Where to store persistent Git configuration
+        run: |
+          touch .github/config
+          cat <<EOF | tee -a .git/config >/dev/null
+          # Persistent Git configuration added to .git/config
+          [include]
+              path = ${{ github.workspace }}/.github/config
+          EOF
+
+      - name: Setup Git
+        id: git-setup
+        run: |
+          echo -e "Git persistent state for env file is: ${{ github.workspace }}/.github/config"
+          echo "GITHUBCONF=${{ github.workspace }}/.github/config" >> "$GITHUB_ENV"
+          export $(git config githubconf.env.env5)
+          echo "NEW_VERSION_TAG=${NEW_VERSION_TAG}" >> "$GITHUB_ENV"
+
+      - name: Check that last commit has annotated tag with current version
+        id: last-commit-tag
+        run: |
+          # LAST_SHA=$(git rev-parse HEAD)
+          TAGS_PR=$(git describe --tags --exact-match HEAD^1 2>/dev/null || true)
+          TAGS=$(git describe --tags --exact-match HEAD 2>/dev/null || true)
+          echo "cancel_workflow=true" >> "$GITHUB_OUTPUT"
+          if [ -z "${TAGS_PR}" ]; then
+            if [ -n "${TAGS}" ]; then
+              for tag in $TAGS; do
+                if [[ "${tag}" == "${NEW_VERSION_TAG}" ]]; then
+                  echo "Found tag equal to NEW_VERSION=${NEW_VERSION_TAG} on HEAD ($(git rev-parse --short HEAD))"
+                  echo "Continue to Release..."
+                  echo "cancel_workflow=false" >> "$GITHUB_OUTPUT"
+                  exit 0
+                fi
+              done
+            fi
+          else
+            for tag in $TAGS_PR; do
+              if [[ "${tag}" == "${NEW_VERSION_TAG}" ]]; then
+                echo "Found tag equal to NEW_VERSION=${NEW_VERSION_TAG} on HEAD^1 ($(git rev-parse --short HEAD^1))"
+                echo "Continue to Release..."
+                echo "cancel_workflow=false" >> "$GITHUB_OUTPUT"
+                exit 0
+              fi
+            done
+          fi
+          echo "No tags equal to NEW_VERSION=${NEW_VERSION_TAG} found on HEAD ($(git rev-parse --short HEAD)) or HEAD^1 ($(git rev-parse --short HEAD^1))"
+          echo "Cancelling workflow..."
+
   just-release:
-    if: github.event_name == 'pull_request' && github.head_ref == 'release'
+    needs: check-release
     name: Release software
     runs-on: ubuntu-latest
+    concurrency:
+      group: ${{ github.workflow }}-${{ github.ref }}
+      cancel-in-progress: ${{ needs.check-release.outputs.cancel_workflow }}
 
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v6
         with:
           fetch-depth: 0
+          fetch-tags: true
+
+      - name: Where to store persistent Git configuration
+        run: |
+          touch .github/config
+          cat <<EOF | tee -a .git/config >/dev/null
+          # Persistent Git configuration added to .git/config
+          [include]
+              path = ${{ github.workspace }}/.github/config
+          EOF
+
+      - name: Setup Git
+        id: git-setup
+        run: |
+          echo -e "Git persistent state for env file is: ${{ github.workspace }}/.github/config"
+          echo "GITHUBCONF=${{ github.workspace }}/.github/config" >> "$GITHUB_ENV"
+          export $(git config githubconf.env.env2)
+          export $(git config githubconf.env.env3)
+          export $(git config githubconf.env.env4)
+          export $(git config githubconf.env.env5)
+          export $(git config githubconf.env.env6)
+          echo "BASE_BRANCH=${BASE_BRANCH}" >> "$GITHUB_ENV"
+          echo "NEW_RELEASE=${NEW_RELEASE}" >> "$GITHUB_ENV"
+          echo "NEW_VERSION=${NEW_VERSION}" >> "$GITHUB_ENV"
+          echo "NEW_VERSION_TAG=${NEW_VERSION_TAG}" >> "$GITHUB_ENV"
+          echo "RELEASE_RUN_ID=${RELEASE_RUN_ID}" >> "$GITHUB_ENV"
 
       - name: Setup Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -30,39 +119,29 @@ jobs:
       - name: Setup git-cliff
         run: |
           # Get git-cliff for this platform
-          cargo install git-cliff
+          cargo +stable install git-cliff
           # Generate default configuration if repository doesn't have one
-          [ -f cliff.toml ] || git-cliff --init
-
-      - name: Download persistent Git configuration
-        uses: actions/download-artifact@v8
-        with:
-          name: gitconfig
-          path: tmp/git/
-
-      - name: Setup Git
-        id: git-setup
-        run: |
-          export $(git config --file tmp/git/config githubconf.env.env1)
-          export $(git config --file tmp/git/config githubconf.env.env2)
-          export $(git config --file tmp/git/config githubconf.env.env3)
-          export $(git config --file tmp/git/config githubconf.env.env4)
-          export $(git config --file tmp/git/config githubconf.env.env5)
-          echo ${XDG_CONFIG_HOME} >> "$GITHUB_ENV"
-          echo ${BASE_BRANCH} >> "$GITHUB_ENV"
-          echo ${NEW_RELEASE} >> "$GITHUB_ENV"
-          echo ${NEW_VERSION} >> "$GITHUB_ENV"
-          echo ${NEW_VERSION_TAG} >> "$GITHUB_ENV"
+          if [ -f cliff.toml ]; then
+            echo "git-cliff configuration $(pwd)/cliff.toml is present in this repository ('${{ github.repository }}' on '${{ github.ref_name }}' branch)"
+          else
+            git-cliff --init
+            echo "Created git-cliff default configuration: $(pwd)/cliff.toml"
+          fi
 
       - name: Generate release notes with git-cliff
-        id: release_notes
+        id: release-notes
         run: |
           echo "Generating release notes..."
           RELEASE_NOTES="$(git-cliff --config github --latest)\n\n"
           RELEASE_NOTES+"### Platforms\n\n"
+          RELEASE_NOTES+"- Linux x86-64 gnu-libc\n"
+          RELEASE_NOTES+"- Linux x86-64 musl (static)\n"
+          RELEASE_NOTES+"- Linux i686 gnu-libc\n"
+          RELEASE_NOTES+"- Linux i686-64 musl (static)\n"
+          RELEASE_NOTES+"- Linux aarch64 gnu-libc\n"
+          RELEASE_NOTES+"- Linux aarch64 musl (static)\n\n"
+          RELEASE_NOTES+"- macOS Darwin x86-64\n"
           RELEASE_NOTES+"- macOS Darwin aarch64\n"
-          RELEASE_NOTES+"- Linux x86-64\n"
-          RELEASE_NOTES+"- Linux aarch64\n\n"
           echo "notes<<EOF"
           echo "$RELEASE_NOTES"
           echo "EOF"
@@ -75,6 +154,22 @@ jobs:
           pattern: pcurl-get-*
           path: tmp/assets/
           merge-multiple: true
+          run-id: ${{ env.RELEASE_RUN_ID }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Change default compression to platform specific (Linux)
+        run: |
+          cd tmp/assets
+          apt install unzip -y
+          for i in $(echo *.zip); do
+            if [[ "${i}" == *"-linux-"* ]]; then
+              BASENAME=$(echo $i | sed -E 's/\.zip$//')
+              echo "Re-archive zip to tar.gz for ${BASENAME}"
+              unzip -qq -o ${i}
+              tar -zcvf pcurl-get "${BASENAME}.tar.gz"
+              rm -f ${i} pcurl-get
+            fi
+          done
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v3
@@ -82,7 +177,7 @@ jobs:
         with:
           tag_name: ${{ env.NEW_VERSION_TAG }}
           name: Release ${{ env.NEW_VERSION_TAG }}
-          body: ${{ steps.release_notes.outputs.notes }}
+          body: ${{ steps.release-notes.outputs.notes }}
           files: |
             tmp/assets/pcurl-get-*
           draft: false
@@ -99,26 +194,30 @@ jobs:
         uses: actions/checkout@v6
         with:
           fetch-depth: 0
+          fetch-tags: true
 
-      - name: Download persistent Git configuration
-        uses: actions/download-artifact@v8
-        with:
-          name: gitconfig
-          path: tmp/git/
+      - name: Where to store persistent Git configuration
+        run: |
+          touch .github/config
+          cat <<EOF | tee -a .git/config >/dev/null
+          # Persistent Git configuration added to .git/config
+          [include]
+              path = ${{ github.workspace }}/.github/config
+          EOF
 
       - name: Setup Git
         id: git-setup
         run: |
-          export $(git config --file tmp/git/config githubconf.env.env1)
-          export $(git config --file tmp/git/config githubconf.env.env2)
-          export $(git config --file tmp/git/config githubconf.env.env3)
-          export $(git config --file tmp/git/config githubconf.env.env4)
-          export $(git config --file tmp/git/config githubconf.env.env5)
-          echo ${XDG_CONFIG_HOME} >> "$GITHUB_ENV"
-          echo ${BASE_BRANCH} >> "$GITHUB_ENV"
-          echo ${NEW_RELEASE} >> "$GITHUB_ENV"
-          echo ${NEW_VERSION} >> "$GITHUB_ENV"
-          echo ${NEW_VERSION_TAG} >> "$GITHUB_ENV"
+          echo -e "Git persistent state for env file is: ${{ github.workspace }}/.github/config"
+          echo "GITHUBCONF=${{ github.workspace }}/.github/config" >> "$GITHUB_ENV"
+          export $(git config githubconf.env.env2)
+          export $(git config githubconf.env.env3)
+          export $(git config githubconf.env.env4)
+          export $(git config githubconf.env.env5)
+          echo "BASE_BRANCH=${BASE_BRANCH}" >> "$GITHUB_ENV"
+          echo "NEW_RELEASE=${NEW_RELEASE}" >> "$GITHUB_ENV"
+          echo "NEW_VERSION=${NEW_VERSION}" >> "$GITHUB_ENV"
+          echo "NEW_VERSION_TAG=${NEW_VERSION_TAG}" >> "$GITHUB_ENV"
 
       - name: Bump version for next release
         run: |
@@ -126,15 +225,15 @@ jobs:
           sed -E -i "s/^version = \"[^\"]*\"/version = \"${NEW_VERSION}\"/" Cargo.toml
           echo ${NEW_VERSION} > VERSION
 
-      - name: Merge back to development branch
+      - name: Merge back to base development branch
         run: |
           # git checkout master
           # git pull
-          # Done with the action actions/checkout@v6 above
+          # Done with the actions/checkout@v6 above
           git checkout "${BASE_BRANCH}"
           git merge ${{ github.ref_name }}  # Brings in version tag and changelog
           # Force delete `release` branch if possible and push all back into repository
-          git branch -D release 2>/dev/null || true
+          git branch -D release || true
           git push --all origin
 
   notify:
@@ -144,4 +243,8 @@ jobs:
     steps:
       - name: Notify
         run: |
-          echo "Release job completed with status: ${{ job.status }}"
+          if [[ "${{ needs.post-release.result }}" == "success" ]]; then
+            echo "✅ Workflow succeeded"
+          else
+            echo "❌ Workflow failed: ${{ needs.post-release.result }}"
+          fi
