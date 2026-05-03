@@ -71,8 +71,8 @@ jobs:
     steps:
       - name: Some actions
         run: |
-          echo "Failing job running in parallel"
-          exit 1
+          echo "Successful job running in parallel"
+          exit 0
 
   Check-status:
     needs: [Explore-GitHub-Actions, Another-Job]
