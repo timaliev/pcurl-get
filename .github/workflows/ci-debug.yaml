@@ -36,7 +36,7 @@ jobs:
           echo
           echo "Version: $VERSIONID"
           # echo "VERSIONID=$VERSIONID" >> "$GITHUB_ENV"
-          echo "$VERSIONID" >> "$GITHUB_ENV"
+          echo "VERSIONID=$VERSIONID" >> "$GITHUB_ENV"
       - run: echo "🍏 This job's status is ${{ job.status }}."
       - run: echo "Which version is it? ${VERSIONID}"
       - name: Where to store persistent Git configuration
@@ -79,8 +79,10 @@ jobs:
     steps:
       - name: Verify status of the previous job
         run: |
-          if [ "${{ needs.Another-Job.result }}" = "success" ]; then
-            echo "✅ Successful workflow execution"
+          if [ "${{ needs.Explore-GitHub-Actions.result }}" = "success" ]; then
+            echo "✅ Successful workflow execution:"
+            echo "Workflow execution Explore-GitHub-Actions finish with status: ${{ needs.Explore-GitHub-Actions.result }}"
+            echo "Workflow execution Another-Job finish with status: ${{ needs.Another-Job.result }}"            
           else
             echo "❌ Workflow execution Explore-GitHub-Actions finish with status: ${{ needs.Explore-GitHub-Actions.result }}"
             echo "❌ Workflow execution Another-Job finish with status: ${{ needs.Another-Job.result }}"
