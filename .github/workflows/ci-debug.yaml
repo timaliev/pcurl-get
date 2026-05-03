@@ -49,10 +49,12 @@ jobs:
           EOF
       - name: Setup Git
         run: |
-          echo -e "Git persistent state for env file is: ${{ github.workspace }}/.github/config"
-          echo "GITHUBCONF=${{ github.workspace }}/.github/config" >> "$GITHUB_ENV"
-          git config --file ${GITHUBCONF}  user.name "github-actions[bot]"
-          git config --file ${GITHUBCONF}  user.email "github-actions[bot]@users.noreply.github.com"
+          export "GITHUBCONF=${{ github.workspace }}/.github/config"
+          echo -e "Git persistent state for env file is: ${GITHUBCONF}"
+          echo "GITHUBCONF=${GITHUBCONF}" >> "$GITHUB_ENV"
+          touch ${GITHUBCONF}
+          git config --file ${GITHUBCONF} user.name "github-actions[bot]"
+          git config --file ${GITHUBCONF} user.email "github-actions[bot]@users.noreply.github.com"
           BASE_BRANCH1=develop
           git config --file ${GITHUBCONF} githubconf.env.env2 "BASE_BRANCH=${BASE_BRANCH1}"
           echo
