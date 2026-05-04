@@ -387,11 +387,11 @@ jobs:
           # Create VERSION file in the root of repo for possible subsequent pushes to this release
           echo ${NEW_VERSION} > VERSION
 
-      - name: Generate CHANGELOG with git-cliff
+      - name: Generate CHANGELOG with git-cliff excluding github workflows
         id: changelog
         run: |
           echo "Generating CHANGELOG.md..."
-          git-cliff --output CHANGELOG.md
+          git-cliff --output CHANGELOG.md --exclude-path=".github/**/*"
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 

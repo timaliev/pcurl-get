@@ -187,11 +187,11 @@ jobs:
             echo "Created git-cliff default configuration: $(pwd)/cliff.toml"
           fi
 
-      - name: Generate release notes with git-cliff
+      - name: Generate release notes with git-cliff excluding github workflows
         id: release-notes
         run: |
           echo "Generating release notes..."
-          RELEASE_NOTES="$(git-cliff --config github --latest)\n\n"
+          RELEASE_NOTES="$(git-cliff --config github --latest --exclude-path=".github/**/*")\n\n"
           RELEASE_NOTES+="### Platforms\n\n"
           RELEASE_NOTES+="- Linux x86-64 gnu-libc\n"
           RELEASE_NOTES+="- Linux x86-64 musl (static)\n"

@@ -26,4 +26,42 @@ $ git push origin release   # Push it to github server
 2. Do not update workflow files in `.github/` directory on the `develop` branch. Instead, work on workflows on the separate `workflow` branch commit changes with `chore(github): ...` comments (so they will not appear in CHANGELOG, release notes have all commits in release) and merge them into `master`. This is to prevent merge conflicts during automated workflows and keep development of the software separate from workflows development.
 <!--TODO: 1. To ensure this policy there is a filter in `PCurl-Get build` workflow that will ignore content of `.github/workflows` during release PR preparation.-->
 3. You can check parameters of last created release as environment variables in `.github/config` file. This file will be recreated each time `PCurl-Get build` workflow runs. Value of new version tag is based solely on existing version tags in repository and decided by `git-cliff` during Release preparation.
+
+## Workflow CHANGELOG
+
+There is a separate changelog for workflows in this repository (like we are having monorepo including main software and workflows). Changelogs for main software in workflows are generated during release process by `git-cliff` with `--exclude-path=".github/**/*"` argument. Changelogs and releases for workflows are generated manually with this commands in repository:
+
+```shell
+$ git checkout master
+$ git pull
+$ git checkout workflow || git checkout -b workflow
+$ cd .github
+#
+# Make changes to workflow files
+#
+# Assume only files in .github/ directory changed on this branch
+$ git add .github/workflows
+$ git commit -m "chore(github): workflow updates"
+$ export NEW_WF_VERSION_TAG=$(git-cliff --tag-pattern "^workflow-v\\d+\\.\\d+\\.\\d+$" --bumped-version)
+$ export NEW_WF_VERSION=$(echo ${NEW_WF_VERSION_TAG} | sed -E "s/^workflow-v//")
+$ git-cliff --bump --tag-pattern "^workflow-v\\d+\\.\\d+\\.\\d+$" --output CHANGELOG.md --exclude-path=".github/config"
+# Assume only files in .github/ directory changed on this branch
+$ git commit -m "chore(version): CHANGELOG for ${NEW_WF_VERSION_TAG}" -- CHANGELOG.md
+$ git tag -f -a "${NEW_WF_VERSION_TAG}" -m "Release ${NEW_WF_VERSION_TAG}"
+$ git push origin "${NEW_WF_VERSION_TAG}"
+$ git push origin workflow
+```
+
+After that create Pull Request in GitHub UI or with CLI from `workflow` branch and merge it into `master` branch. If work on workflow files is going to continue it is a good idea to pull all changes from master back into `workflow` branch with this commands in repository:
+
+```shell
+$ git checkout master
+$ git pull
+$ git checkout workflow
+$ git merge master
+```
+
+Usually it should run without merging conflicts if all rules in this README are observed.
+
+Use conventional commits to commit changes to workflow files normally (with `feat` and `fix`). They will not appear on main software changelog because of `--exclude-path` argument to `git-cliff`.
 <!-- -->
