@@ -46,6 +46,7 @@ $ export NEW_WF_VERSION_TAG=$(git-cliff --tag-pattern "^workflow-v\\d+\\.\\d+\\.
 $ export NEW_WF_VERSION=$(echo ${NEW_WF_VERSION_TAG} | sed -E "s/^workflow-v//")
 $ git-cliff --bump --tag-pattern "^workflow-v\\d+\\.\\d+\\.\\d+$" --output CHANGELOG.md --exclude-path=".github/config"
 # Assume only files in .github/ directory changed on this branch
+$ git add CHANGELOG.md
 $ git commit -m "chore(version): CHANGELOG for ${NEW_WF_VERSION_TAG}" -- CHANGELOG.md
 $ git tag -f -a "${NEW_WF_VERSION_TAG}" -m "Release ${NEW_WF_VERSION_TAG}"
 $ git push origin "${NEW_WF_VERSION_TAG}"
