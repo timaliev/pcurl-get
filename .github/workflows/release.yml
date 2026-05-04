@@ -143,6 +143,11 @@ jobs:
       - name: Setup Rust toolchain
         uses: dtolnay/rust-toolchain@stable
 
+      - name: Cache cargo build
+        uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
+
       - name: Setup git-cliff
         run: |
           # Get git-cliff for this platform
@@ -187,7 +192,8 @@ jobs:
       - name: Change default compression to platform specific (Linux)
         run: |
           cd tmp/assets
-          apt install unzip -y
+          sudo apt-get update
+          sudo apt-get install -y unzip
           for i in $(echo *.zip); do
             if [[ "${i}" == *"-linux-"* ]]; then
               BASENAME=$(echo $i | sed -E 's/\.zip$//')
