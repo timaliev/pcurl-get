@@ -9,7 +9,9 @@ on:
 
 # Cancel any currently running workflow(s) if the new one is started
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  # group: ${{ github.workflow }}-${{ github.ref }}
+  # Only one workflows for `master` branch
+  group: ${{ github.ref }}
   cancel-in-progress: true
 
 permissions:
@@ -19,7 +21,7 @@ permissions:
 
 jobs:
   check-release:
-    name: Check if commits to be released are pushed
+    name: Check if commits to be released are pushed or cancel workflow
     runs-on: ubuntu-latest
     outputs:
       cancel_workflow: ${{ steps.last-commit-tag.outputs.cancel_workflow == 'true' }}
@@ -48,15 +50,39 @@ jobs:
           export $(git config githubconf.env.env5)
           echo "NEW_VERSION_TAG=${NEW_VERSION_TAG}" >> "$GITHUB_ENV"
 
-      - name: Check that last commit has annotated tag with current version
+      - name: Check if release already exists
+        id: release-exists
+        uses: insightsengineering/release-existence-action@v1.0.0
+        with:
+          release-tag: ${{ env.NEW_VERSION_TAG }}
+
+      - name: Verify version tag is on master
+        if: "startsWith(github.ref, 'refs/tags/v') && steps.release-exists.outputs.release-exists == 'false'"
+        id: verify-tag
+        run: |
+          echo "is-on-master=true" >> $GITHUB_ENV
+          if git merge-base --is-ancestor ${{ github.sha }} origin/master >/dev/null 2>&1; then
+            echo "Version tag '${{ github.ref }}' push to the 'master' branch"
+          else
+            echo "Version tag '${{ github.ref }}' push to other branch then 'master'. Skip this workflow..."
+            echo "is-on-master=false" >> $GITHUB_ENV
+          fi
+
+      - name: Check that last commit has annotated tag with current release version
+        if: steps.release-exists.outputs.release-exists == 'false'
         id: last-commit-tag
         run: |
           # LAST_SHA=$(git rev-parse HEAD)
+          echo "cancel_workflow=true" >> "$GITHUB_OUTPUT"
+          TAG_ON_MASTER="${is-on-master:-true}"
+          if [ "${TAG_ON_MASTER}" = "false" ]; then
+            exit 0
+          fi
           TAGS_PR=$(git describe --tags --exact-match HEAD^1 2>/dev/null || true)
           TAGS=$(git describe --tags --exact-match HEAD 2>/dev/null || true)
-          echo "cancel_workflow=true" >> "$GITHUB_OUTPUT"
           if [ -z "${TAGS_PR}" ]; then
-            if [ -n "${TAGS}" ]; then
+            # If tag pushed not on master -- cancel workflow
+            if [ -n "${TAGS}" ] && [ "${TAG_ON_MASTER}" = 'true' ]; then
               for tag in $TAGS; do
                 if [[ "${tag}" == "${NEW_VERSION_TAG}" ]]; then
                   echo "Found tag equal to NEW_VERSION=${NEW_VERSION_TAG} on HEAD ($(git rev-parse --short HEAD))"
@@ -80,7 +106,8 @@ jobs:
           echo "Cancelling workflow..."
 
       - name: Cancel this workflow run
-        if: steps.last-commit-tag.outputs.cancel_workflow == 'true'
+        # Cancel if release already exists or 
+        if: steps.last-commit-tag.outputs.cancel_workflow == 'true' || steps.release-exists.outputs.release-exists == 'true' 
         uses: actions/github-script@v7
         with:
           script: |
@@ -92,7 +119,7 @@ jobs:
             })
 
       - name: Wait for cancellation
-        if: steps.last-commit-tag.outputs.cancel_workflow == 'true'
+        if: steps.last-commit-tag.outputs.cancel_workflow == 'true' || steps.release-exists.outputs.release-exists == 'true'
         uses: actions/github-script@v7
         with:
           script: |
@@ -174,9 +201,9 @@ jobs:
           RELEASE_NOTES+="- Linux aarch64 musl (static)\n"
           RELEASE_NOTES+="- macOS Darwin x86-64\n"
           RELEASE_NOTES+="- macOS Darwin aarch64\n\n"
-          echo "notes<<EOF"
-          echo "$RELEASE_NOTES"
-          echo "EOF"
+          echo "notes<<EOF" >> "$GITHUB_OUTPUT"
+          echo "$RELEASE_NOTES" >> "$GITHUB_OUTPUT"
+          echo "EOF" >> "$GITHUB_OUTPUT"
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -189,18 +216,22 @@ jobs:
           run-id: ${{ env.RELEASE_RUN_ID }}
           github-token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Change default compression to platform specific (Linux)
+      - name: Platform specific compression (Linux/Macos)
         run: |
           cd tmp/assets
           sudo apt-get update
-          sudo apt-get install -y unzip
-          for i in $(echo *.zip); do
+          sudo apt-get install -y unzip zip
+          for i in $(echo *); do
             if [[ "${i}" == *"-linux-"* ]]; then
-              BASENAME=$(echo $i | sed -E 's/\.zip$//')
-              echo "Re-archive zip to tar.gz for ${BASENAME}"
-              unzip -qq -o ${i}
-              tar -zcvf pcurl-get "${BASENAME}.tar.gz"
-              rm -f ${i} pcurl-get
+              mv ${i} pcurl-get
+              chmod +x pcurl-get
+              tar -zcvf pcurl-get "${i}.tar.gz"
+              rm -f pcurl-get
+            else
+              mv ${i} pcurl-get
+              chmod +x pcurl-get
+              zip -q ${i}.zip pcurl-get
+              rm -f pcurl-get
             fi
           done
 
@@ -252,12 +283,6 @@ jobs:
           echo "NEW_VERSION=${NEW_VERSION}" >> "$GITHUB_ENV"
           echo "NEW_VERSION_TAG=${NEW_VERSION_TAG}" >> "$GITHUB_ENV"
 
-      - name: Bump version for next release
-        run: |
-          NEW_VERSION=${NEW_VERSION}+
-          sed -E -i "s/^version = \"[^\"]*\"/version = \"${NEW_VERSION}\"/" Cargo.toml
-          echo ${NEW_VERSION} > VERSION
-
       - name: Merge back to base development branch
         run: |
           # git checkout master
@@ -265,12 +290,20 @@ jobs:
           # Done with the actions/checkout@v6 above
           git checkout "${BASE_BRANCH}"
           git merge ${{ github.ref_name }}  # Brings in version tag and changelog
-          # Force delete `release` branch if possible and push all back into repository
-          git branch -D release || true
+          # Bump version toward next release (add '+')
+          NEW_VERSION=${NEW_VERSION}+
+          sed -E -i "s/^version = \"[^\"]*\"/version = \"${NEW_VERSION}\"/" Cargo.toml
+          echo ${NEW_VERSION} > VERSION
+          git add VERSION Cargo.toml
+          git commit -m "chore(version): bump version toward next release" -- VERSION Cargo.toml
+          # Push everything to origin/${BASE_BRANCH}
           git push --all origin
+          # Force delete `release` branch if possible
+          # git branch -D release || true
+          git branch -r -D origin/release || true
 
   notify:
-    needs: post-release
+    needs: [check-release, just-release, post-release]
     if: always()
     runs-on: ubuntu-latest
     steps:
@@ -279,5 +312,13 @@ jobs:
           if [[ "${{ needs.post-release.result }}" == "success" ]]; then
             echo "✅ Workflow succeeded"
           else
-            echo "❌ Workflow failed: ${{ needs.post-release.result }}"
+            declare -A WF_RESULTS
+            WF_RESULTS[check-release]="${{ needs.check-release.result }}"
+            WF_RESULTS[just-release]="${{ needs.just-release.result }}"
+            WF_RESULTS[post-release]="${{ needs.post-release.result }}"
+            echo "❌ Workflow failed: ${WF_RESULTS[post-release]}"
+            for key in "${!WF_RESULTS[@]}"; do
+              echo "Job '${key}', status: ${WF_RESULTS[$key]}"
+            done
+            exit 1
           fi
