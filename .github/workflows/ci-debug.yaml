@@ -1,0 +1,92 @@
+name: GitHub Actions Demo
+run-name: "@${{ github.actor }} is testing out GitHub Actions 🚀 (${{ github.action }}/${{ github.event_name }} on ${{ github.ref_name }})"
+on:
+  push:
+  pull_request:
+    types: [closed]
+  workflow_dispatch:
+
+jobs:
+  Explore-GitHub-Actions:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "🎉 The job was automatically triggered by a ${{ github.event_name }} event."
+      - run: echo "🐧 This job is now running on a ${{ runner.os }} server hosted by GitHub!"
+      - run: echo "🔎 The name of your branch is ${{ github.ref_name }} (${{ github.ref }}) and your repository is ${{ github.repository }}."
+      - name: Detect Pull Request
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            echo "🔎 The name of base branch is '${{ github.base_ref }}' head branch is '${{ github.head_ref }}'"
+          else
+            echo "This is a '${{ github.event_name }}' to '${{ github.ref }}'"
+          fi
+      - run: |
+          echo "github.event:"
+          echo "${{ github.event }}" | jq . || true
+      - name: Check out repository code
+        uses: actions/checkout@v5
+      - run: echo "💡 The ${{ github.repository }} repository has been cloned to the runner."
+      - run: echo "🖥️ The workflow is now ready to test your code on the runner."
+      - name: List files in the repository
+        run: |
+          ls ${{ github.workspace }}
+          #env
+          #cat /etc/os-release
+          VERSIONID=$(cat /etc/os-release | grep VERSION_ID | cut -d'=' -f2)
+          echo
+          echo "Version: $VERSIONID"
+          # echo "VERSIONID=$VERSIONID" >> "$GITHUB_ENV"
+          echo "VERSIONID=$VERSIONID" >> "$GITHUB_ENV"
+      - run: echo "🍏 This job's status is ${{ job.status }}."
+      - run: echo "Which version is it? ${VERSIONID}"
+      - name: Where to store persistent Git configuration
+        run: |
+          touch .github/config
+          cat <<EOF | tee -a .git/config >/dev/null
+          # Persistent Git configuration added to .git/config
+          [include]
+              path = ${{ github.workspace }}/.github/config
+          EOF
+      - name: Setup Git
+        run: |
+          export "GITHUBCONF=${{ github.workspace }}/.github/config"
+          echo -e "Git persistent state for env file is: ${GITHUBCONF}"
+          echo "GITHUBCONF=${GITHUBCONF}" >> "$GITHUB_ENV"
+          touch ${GITHUBCONF}
+          git config --file ${GITHUBCONF} user.name "github-actions[bot]"
+          git config --file ${GITHUBCONF} user.email "github-actions[bot]@users.noreply.github.com"
+          BASE_BRANCH1=develop
+          git config --file ${GITHUBCONF} githubconf.env.env2 "BASE_BRANCH=${BASE_BRANCH1}"
+          echo
+          echo "List of Git config values and it's origins:"
+          git config --list --show-origin
+          echo
+          export $(git config --file ${GITHUBCONF} githubconf.env.env2)
+          echo BASE_BRANCH = ${BASE_BRANCH}
+          echo "Content of Git configuration:"
+          cat ${GITHUBCONF}
+
+  Another-Job:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Some actions
+        run: |
+          echo "Successful job running in parallel"
+          exit 0
+
+  Check-status:
+    needs: [Explore-GitHub-Actions, Another-Job]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Verify status of the previous job
+        run: |
+          if [ "${{ needs.Explore-GitHub-Actions.result }}" = "success" ]; then
+            echo "✅ Successful workflow execution:"
+            echo "Workflow execution Explore-GitHub-Actions finish with status: ${{ needs.Explore-GitHub-Actions.result }}"
+            echo "Workflow execution Another-Job finish with status: ${{ needs.Another-Job.result }}"            
+          else
+            echo "❌ Workflow execution Explore-GitHub-Actions finish with status: ${{ needs.Explore-GitHub-Actions.result }}"
+            echo "❌ Workflow execution Another-Job finish with status: ${{ needs.Another-Job.result }}"
+            exit 1
+          fi
