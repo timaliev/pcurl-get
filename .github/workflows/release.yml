@@ -311,6 +311,8 @@ jobs:
         run: |
           if [[ "${{ needs.post-release.result }}" == "success" ]]; then
             echo "✅ Workflow succeeded"
+          else if [[ "${{ needs.post-release.result }}" == "cancelled" ]]; then
+            echo "☑️ Workflow silently cancelled"
           else
             declare -A WF_RESULTS
             WF_RESULTS[check-release]="${{ needs.check-release.result }}"
