@@ -80,11 +80,14 @@ async fn main() -> Result<()> {
   Ok(())
 }
 
-pub fn read_urls(path: &Path) -> Result<Vec<String>> {
+pub fn read_urls(path: &Path) -> Result<Vec<Url>> {
   std::fs::read_to_string(path)
     .context("Failed to read file")?
     .lines()
-    .map(|line| Ok(line.to_string()))
+    .map(|line|
+      if let url = Url::parse(line)
+        Ok(line.to_string())
+    )
     .collect()
 }
 
