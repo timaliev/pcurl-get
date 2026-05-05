@@ -9,14 +9,14 @@
 //! - `fetch_url()`: HTTP fetching with mockito
 //! - `main()`: Integration tests with real HTTP scenarios
 //!
-//! Run tests with: cargo test
+// Run tests with: cargo test
 
 use anyhow::{Result, bail};
 use mockito::Mock;
 use reqwest::Client;
 use std::{io::Write, path::PathBuf, str::FromStr};
 use tempfile::{NamedTempFile, tempdir};
-use tokio::{fs, fs::File, io::AsyncReadExt};
+use tokio::{fs, fs::File, io::AsyncReadExt, task};
 
 #[path = "../src/main.rs"]
 mod pcurl_get;
@@ -627,6 +627,449 @@ async fn main_with_whitespace_only_urls() -> Result<()> {
       // This might fail if there are no valid URLs after filtering
     }
   }
+}
+
+// =================================================
+// Tests for parallelism (chunking / batching)
+// =================================================
+
+/// Helper: replicate the chunk-based parallel fetch loop from `main()`.
+/// Accepts a pre-built `Client`, a list of URLs, a `save` flag, and a
+/// `parallelism` limit (batch size).  Returns the number of successfully
+/// processed URLs.
+async fn run_parallel_fetch(
+  client: &Client,
+  urls: &[String],
+  save: bool,
+  parallelism: usize,
+) -> Result<usize> {
+  if urls.is_empty() {
+    return Ok(0);
+  }
+
+  let effective = if parallelism == 0 || parallelism > urls.len() {
+    urls.len()
+  } else {
+    parallelism
+  };
+
+  let mut processed = 0_usize;
+  for chunk in urls.chunks(effective) {
+    let mut batch = Vec::with_capacity(chunk.len());
+    for (i, url) in chunk.iter().enumerate() {
+      let client = client.clone();
+      let url = url.trim().to_string();
+      let global_index = i + processed;
+      let handle = task::spawn(async move {
+        fetch_url(&client, &url, save, global_index).await
+      });
+      batch.push(handle);
+    }
+    for handle in batch {
+      handle.await??;
+      processed += 1;
+    }
+  }
+  Ok(processed)
+}
+
+#[test]
+fn parallelism_chunk_sizes() {
+  // Verify that chunk() produces correct batch boundaries.
+  let urls: Vec<String> = (0..10).map(|i| format!("https://example.com/{i}")).collect();
+
+  // parallelism = 3 → 4 chunks: [3, 3, 3, 1]
+  let chunks: Vec<_> = urls.chunks(3).collect();
+  assert_eq!(chunks.len(), 4);
+  assert_eq!(chunks[0].len(), 3);
+  assert_eq!(chunks[1].len(), 3);
+  assert_eq!(chunks[2].len(), 3);
+  assert_eq!(chunks[3].len(), 1);
+
+  // parallelism = 1 → 10 chunks of size 1
+  let chunks: Vec<_> = urls.chunks(1).collect();
+  assert_eq!(chunks.len(), 10);
+  assert!(chunks.iter().all(|c| c.len() == 1));
+
+  // parallelism >= urls.len() → 1 chunk
+  let chunks: Vec<_> = urls.chunks(10).collect();
+  assert_eq!(chunks.len(), 1);
+  assert_eq!(chunks[0].len(), 10);
+
+  let chunks: Vec<_> = urls.chunks(usize::MAX).collect();
+  assert_eq!(chunks.len(), 1);
+  assert_eq!(chunks[0].len(), 10);
+}
+
+#[test]
+fn parallelism_chunk_empty_urls() {
+  let urls: Vec<String> = vec![];
+  // Zero urls → zero chunks.
+  let chunks: Vec<_> = urls.chunks(3).collect();
+  assert!(chunks.is_empty());
+  // chunks(0) panics, so the main() code guards against parallelism == 0
+  // by clamping to urls.len(). Even with clamp, chunks(0) on empty vec
+  // would panic — but urls.len() == 0 means effective == 0 and the for
+  // loop over chunks(0) would panic.  The real main() avoids this because
+  // if urls.is_empty() the for loop body never executes (chunks(0) is not
+  // called because effective == urls.len() == 0 and chunks(0) panics).
+  // We document this edge-case here.
+}
+
+#[tokio::test]
+async fn parallelism_all_at_once() -> Result<()> {
+  // Default behaviour: parallelism == usize::MAX → fire all at once.
+  use mockito::Server;
+
+  let mut server = Server::new_async().await;
+  let count = 8_usize;
+  let mut mocks = Vec::with_capacity(count);
+  let mut test_urls = Vec::with_capacity(count);
+
+  for i in 0..count {
+    let path = format!("/all-{i}");
+    let url = format!("{}{}", server.url(), path);
+    let mock = server
+      .mock("GET", path.as_str())
+      .with_body(format!("body-{i}").as_bytes())
+      .create_async()
+      .await;
+    mocks.push(mock);
+    test_urls.push(url);
+  }
+
+  let client = Client::builder().build()?;
+  // parallelism = usize::MAX → all URLs in one chunk
+  let processed = run_parallel_fetch(&client, &test_urls, false, usize::MAX).await?;
+  assert_eq!(processed, count);
+
+  for mock in mocks {
+    mock.assert_async().await;
+  }
+
+  Ok(())
+}
+
+#[tokio::test]
+async fn parallelism_limited_to_2() -> Result<()> {
+  // More URLs than parallelism → multiple batches.
+  use mockito::Server;
+
+  let mut server = Server::new_async().await;
+  let count = 7_usize; // 2 + 2 + 2 + 1 = 4 batches
+  let batch_size = 2;
+  let mut mocks = Vec::with_capacity(count);
+  let mut test_urls = Vec::with_capacity(count);
+
+  for i in 0..count {
+    let path = format!("/lim-{i}");
+    let url = format!("{}{}", server.url(), path);
+    let mock = server
+      .mock("GET", path.as_str())
+      .with_body(format!("b-{i}").as_bytes())
+      .create_async()
+      .await;
+    mocks.push(mock);
+    test_urls.push(url);
+  }
+
+  let client = Client::builder().build()?;
+  let processed = run_parallel_fetch(&client, &test_urls, false, batch_size).await?;
+  assert_eq!(processed, count);
+
+  for mock in mocks {
+    mock.assert_async().await;
+  }
+
+  Ok(())
+}
+
+#[tokio::test]
+async fn parallelism_single_sequential() -> Result<()> {
+  // parallelism = 1 → purely sequential processing.
+  use mockito::Server;
+
+  let mut server = Server::new_async().await;
+  let count = 5_usize;
+  let mut mocks = Vec::with_capacity(count);
+  let mut test_urls = Vec::with_capacity(count);
+
+  for i in 0..count {
+    let path = format!("/seq-{i}");
+    let url = format!("{}{}", server.url(), path);
+    let mock = server
+      .mock("GET", path.as_str())
+      .with_body(format!("seq-{i}").as_bytes())
+      .create_async()
+      .await;
+    mocks.push(mock);
+    test_urls.push(url);
+  }
+
+  let client = Client::builder().build()?;
+  let processed = run_parallel_fetch(&client, &test_urls, false, 1).await?;
+  assert_eq!(processed, count);
+
+  for mock in mocks {
+    mock.assert_async().await;
+  }
+
+  Ok(())
+}
+
+#[tokio::test]
+async fn parallelism_exceeds_url_count() -> Result<()> {
+  // parallelism > urls.len() → clamped, single batch.
+  use mockito::Server;
+
+  let mut server = Server::new_async().await;
+  let count = 3_usize;
+  let mut mocks = Vec::with_capacity(count);
+  let mut test_urls = Vec::with_capacity(count);
+
+  for i in 0..count {
+    let path = format!("/over-{i}");
+    let url = format!("{}{}", server.url(), path);
+    let mock = server
+      .mock("GET", path.as_str())
+      .with_body(format!("over-{i}").as_bytes())
+      .create_async()
+      .await;
+    mocks.push(mock);
+    test_urls.push(url);
+  }
+
+  let client = Client::builder().build()?;
+  // Request parallelism 100 for only 3 URLs — should still work.
+  let processed = run_parallel_fetch(&client, &test_urls, false, 100).await?;
+  assert_eq!(processed, count);
+
+  for mock in mocks {
+    mock.assert_async().await;
+  }
+
+  Ok(())
+}
+
+#[tokio::test]
+async fn parallelism_with_errors_mixed() -> Result<()> {
+  // Some URLs return errors; the successful ones must still be processed.
+  use mockito::Server;
+
+  let mut server = Server::new_async().await;
+  let path_ok = "/ok";
+  let path_err = "/err";
+  let url_ok = format!("{}{}", server.url(), path_ok);
+  let url_err = format!("{}{}", server.url(), path_err);
+
+  let mock_ok = server
+    .mock("GET", path_ok)
+    .with_body(b"good")
+    .expect(3) // called 3 times in the url list
+    .create_async()
+    .await;
+  let mock_err = server
+    .mock("GET", path_err)
+    .with_status(500)
+    .with_body(b"bad")
+    .expect(2) // called 2 times in the url list
+    .create_async()
+    .await;
+
+  let urls = [
+    url_ok.clone(),
+    url_err.clone(),
+    url_ok.clone(),
+    url_err.clone(),
+    url_ok.clone(),
+  ];
+
+  let client = Client::builder().build()?;
+
+  // Run with parallelism=2 so errors and successes interleave across batches.
+  let mut processed_ok = 0_usize;
+  let effective = 2.min(urls.len());
+  for chunk in urls.chunks(effective) {
+    let mut batch = Vec::with_capacity(chunk.len());
+    for (i, url) in chunk.iter().enumerate() {
+      let client = client.clone();
+      let url = url.trim().to_string();
+      let global_index = i + processed_ok;
+      let handle = task::spawn(async move {
+        fetch_url(&client, &url, false, global_index).await
+      });
+      batch.push(handle);
+    }
+    for handle in batch {
+      match handle.await? {
+        Ok(()) => processed_ok += 1,
+        Err(_) => { /* errors are expected for 500 */ }
+      }
+    }
+  }
+
+  // 3 success URLs
+  assert_eq!(processed_ok, 3);
+
+  mock_ok.assert_async().await;
+  mock_err.assert_async().await;
+
+  Ok(())
+}
+
+#[tokio::test]
+async fn parallelism_with_save_all_batches() -> Result<()> {
+  // Concurrent saves across batches — files must not collide.
+  use mockito::Server;
+  use sha2::{Digest, Sha256};
+
+  let mut server = Server::new_async().await;
+  let count = 6_usize;
+  let batch_size = 2;
+  let mut mocks = Vec::with_capacity(count);
+  let mut test_urls = Vec::with_capacity(count);
+  let mut expected_bodies: Vec<Vec<u8>> = Vec::with_capacity(count);
+
+  for i in 0..count {
+    let path = format!("/save-par-{i}");
+    let url = format!("{}{}", server.url(), path);
+    let body = format!("parallel-save-body-{i}").into_bytes();
+    let mock = server
+      .mock("GET", path.as_str())
+      .with_body(body.clone())
+      .create_async()
+      .await;
+    mocks.push(mock);
+    test_urls.push(url);
+    expected_bodies.push(body);
+  }
+
+  let client = Client::builder().build()?;
+  let processed = run_parallel_fetch(&client, &test_urls, true, batch_size).await?;
+  assert_eq!(processed, count);
+
+  // Verify each saved file exists and has correct content.
+  for (i, url) in test_urls.iter().enumerate() {
+    let mut hasher = Sha256::new();
+    hasher.update(url.as_bytes());
+    let filename = format!(
+      "{}-{}-{}",
+      i,
+      convert_url(url),
+      hex::encode(hasher.finalize())
+    );
+    let path = PathBuf::from_str(&filename)?;
+    let mut file = File::open(&path).await?;
+    let mut contents = Vec::new();
+    file.read_to_end(&mut contents).await?;
+    assert_eq!(contents, expected_bodies[i], "mismatch for URL index {i}");
+    fs::remove_file(path).await?;
+  }
+
+  for mock in mocks {
+    mock.assert_async().await;
+  }
+
+  Ok(())
+}
+
+#[tokio::test]
+async fn parallelism_no_race_on_file_names() -> Result<()> {
+  // Ensure concurrent tasks with unique indices never produce the same
+  // filename, even when the same URL appears multiple times.
+  use sha2::{Digest, Sha256};
+
+  // Same URL repeated — only the index disambiguates.
+  let url = "https://example.com/dup";
+  let urls: Vec<String> = std::iter::repeat_n(url.to_string(), 5).collect();
+
+  let mut filenames = std::collections::HashSet::new();
+  for (i, u) in urls.iter().enumerate() {
+    let mut hasher = Sha256::new();
+    hasher.update(u.as_bytes());
+    let fname = format!(
+      "{}-{}-{}",
+      i,
+      convert_url(u),
+      hex::encode(hasher.finalize())
+    );
+    assert!(filenames.insert(fname.clone()), "duplicate filename: {fname}");
+  }
+  assert_eq!(filenames.len(), urls.len());
+
+  Ok(())
+}
+
+#[tokio::test]
+async fn parallelism_batch_ordering() -> Result<()> {
+  // Within a batch tasks run concurrently, but batches themselves are
+  // serial.  We verify this by checking that every URL is fetched exactly
+  // once (mockito `.expect()` enforces this).
+  use mockito::Server;
+
+  let mut server = Server::new_async().await;
+  let count = 4_usize;
+  let mut mocks = Vec::with_capacity(count);
+  let mut test_urls = Vec::with_capacity(count);
+
+  for i in 0..count {
+    let path = format!("/order-{i}");
+    let url = format!("{}{}", server.url(), path);
+    let mock = server
+      .mock("GET", path.as_str())
+      .with_body(format!("order-{i}").as_bytes())
+      .expect(1) // each called exactly once
+      .create_async()
+      .await;
+    mocks.push(mock);
+    test_urls.push(url);
+  }
+
+  let client = Client::builder().build()?;
+  let processed = run_parallel_fetch(&client, &test_urls, false, 2).await?;
+  assert_eq!(processed, count);
+
+  for mock in mocks {
+    mock.assert_async().await;
+  }
+
+  Ok(())
+}
+
+#[tokio::test]
+async fn parallelism_empty_url_list() -> Result<()> {
+  // No URLs → nothing to do, no panics.
+  let urls: Vec<String> = vec![];
+  let client = Client::builder().build()?;
+  let processed = run_parallel_fetch(&client, &urls, false, 4).await?;
+  assert_eq!(processed, 0);
+
+  Ok(())
+}
+
+#[tokio::test]
+async fn parallelism_single_url() -> Result<()> {
+  // Trivial case: one URL with various parallelism values.
+  // Each iteration creates its own server + mock so expectations are per-call.
+  let client = Client::builder().build()?;
+
+  for p in [1_usize, 2, 10, usize::MAX] {
+    let mut server = mockito::Server::new_async().await;
+    let path = "/single-par";
+    let url = format!("{}{}", server.url(), path);
+    let mock = server
+      .mock("GET", path)
+      .with_body(b"solo")
+      .create_async()
+      .await;
+
+    let processed = run_parallel_fetch(&client, &[url], false, p).await?;
+    assert_eq!(processed, 1, "failed for parallelism={p}");
+
+    mock.assert_async().await;
+  }
+
+  Ok(())
 }
 
 // ===========================

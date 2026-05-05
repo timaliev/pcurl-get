@@ -25,6 +25,16 @@ struct Args {
     help = "Save responses to files (named as index-url_hash)"
   )]
   save: bool,
+
+  /// Limit parallel URL requests. Defaults to unlimited (all at once).
+  /// If greater than total URLs, requests all URLs in one take.
+  #[arg(
+    short = 'P',
+    long,
+    default_value_t = usize::MAX,
+    help = "Limit parallel URL requests (default: unlimited)"
+  )]
+  parallelism: usize,
 }
 
 #[tokio::main]
@@ -32,7 +42,6 @@ async fn main() -> Result<()> {
   let args = Args::parse();
 
   let urls = read_urls(&args.urls_file).context("Failed to read URLs file")?;
-  let mut handles = Vec::with_capacity(urls.len());
 
   // Record start time of request loop
   let start_instant = Instant::now();
@@ -44,23 +53,33 @@ async fn main() -> Result<()> {
     offset,
   );
 
-  let client = Client::new();
-  for (i, url) in urls.iter().enumerate() {
-    let client = client.clone();
-    let url = url.trim().to_string();
-    let save = args.save;
-    // eprintln!("DEBUG: fetching {} {}", i, url);
-    let handle = task::spawn(async move {
-      fetch_url(&client, &url, save, i)
-        .await
-        .context(format!("Failed to fetch {}", url))
-    });
-    handles.push(handle);
-  }
+  let parallelism = if args.parallelism > urls.len() {
+    urls.len()
+  } else {
+    args.parallelism
+  };
+  println!("🔧 Parallelism: {} concurrent requests", parallelism);
 
-  let mut results = Vec::with_capacity(handles.len());
-  for handle in handles {
-    results.push(handle.await?);
+  let client = Client::new();
+  let mut results = Vec::with_capacity(urls.len());
+
+  for chunk in urls.chunks(parallelism) {
+    let mut batch = Vec::with_capacity(chunk.len());
+    for (i, url) in chunk.iter().enumerate() {
+      let client = client.clone();
+      let url = url.trim().to_string();
+      let save = args.save;
+      let global_index = i + results.len();
+      let handle = task::spawn(async move {
+        fetch_url(&client, &url, save, global_index)
+          .await
+          .context(format!("Failed to fetch {}", url))
+      });
+      batch.push(handle);
+    }
+    for handle in batch {
+      results.push(handle.await?);
+    }
   }
   println!(
     "✅ Successfully processed {} lines in {}",
