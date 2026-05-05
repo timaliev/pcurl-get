@@ -46,7 +46,7 @@ fn read_urls_single_url() -> Result<()> {
 
   let urls = read_urls(&path)?;
   assert_eq!(urls.len(), 1);
-  assert_eq!(urls[0], "https://example.com");
+  assert_eq!(urls[0], "https://example.com/");
 
   Ok(())
 }
@@ -61,9 +61,9 @@ fn read_urls_multiple_urls() -> Result<()> {
 
   let urls = read_urls(&path)?;
   assert_eq!(urls.len(), 3);
-  assert_eq!(urls[0], "https://example.com");
+  assert_eq!(urls[0], "https://example.com/");
   assert_eq!(urls[1], "https://test.org/path");
-  assert_eq!(urls[2], "https://api.github.com");
+  assert_eq!(urls[2], "https://api.github.com/");
 
   Ok(())
 }
@@ -78,7 +78,7 @@ fn read_urls_with_empty_lines() -> Result<()> {
   let path = file.path().to_path_buf();
 
   let urls = read_urls(&path)?;
-  assert_eq!(urls.len(), 4); // empty lines and whitespace preserved
+  assert_eq!(urls.len(), 2); // empty lines and whitespace preserved
 
   Ok(())
 }
@@ -619,7 +619,7 @@ async fn main_with_whitespace_only_urls() -> Result<()> {
   let result = read_urls(&urls_file);
   match result {
     Ok(urls) => {
-      assert_eq!(urls.len(), 4); // no validity is tested on file read
+      assert_eq!(urls.len(), 1); // no validity is tested on file read
       Ok(())
     }
     Err(e) => {

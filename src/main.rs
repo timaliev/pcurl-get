@@ -84,6 +84,7 @@ pub fn read_urls(path: &Path) -> Result<Vec<String>> {
   std::fs::read_to_string(path)
     .context("Failed to read file")?
     .lines()
+    .filter_map(|line| Url::parse(line).ok())
     .map(|line| Ok(line.to_string()))
     .collect()
 }

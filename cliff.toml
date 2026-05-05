@@ -102,11 +102,12 @@ commit_parsers = [
     { message = "^revert", group = "Revert" },
     { message = "^test", group = "<!-- 4 --> Tests" },
     { message = "^tests", group = "<!-- 4 --> Tests" },
+    { body = ".*security", group = "Security" },
     { message = "^chore\\(version\\):", skip = true },
+    { message = "^chore\\(wip\\):", skip = true },
+    { message = "^chore", group = "<!-- 8 --> Miscellaneous Chores" },
     { message = "^Merge pull request", skip = true },
     { message = "(^Update |^Create ).*\\.(yaml|yml)$", skip = true },
-    { message = "^chore", group = "<!-- 8 --> Miscellaneous Chores" },
-    { body = ".*security", group = "Security" },
     { message = ".*", group = "<!-- 9 --> Other" },
 ]
 # Exclude commits that are not matched by any commit parser.
