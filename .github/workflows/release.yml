@@ -290,8 +290,9 @@ jobs:
           # Done with the actions/checkout@v6 above
           git checkout "${BASE_BRANCH}"
           git merge ${{ github.ref_name }}  # Brings in version tag and changelog
-          # Bump version toward next release (add '+')
-          NEW_VERSION=${NEW_VERSION}+
+          # Bump version toward next release by incrementing patch level (semver)
+          IFS='.' read -r MAJOR MINOR PATCH <<< "${NEW_VERSION}"
+          NEW_VERSION="${MAJOR}.${MINOR}.$((PATCH + 1))"
           sed -E -i "s/^version = \"[^\"]*\"/version = \"${NEW_VERSION}\"/" Cargo.toml
           echo ${NEW_VERSION} > VERSION
           git add VERSION Cargo.toml
