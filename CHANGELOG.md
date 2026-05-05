@@ -38,6 +38,7 @@ feat(tests): unit tests and integration tests. - ([f15ab19](https://github.com/t
 ### Documentation
 
 - todos as list - ([b31f921](https://github.com/timaliev/pcurl-get/commit/b31f9219947cff843d6ee9e0f7e3130848830519)) - Timur Aliev
+- Added last changes to command line arguments and updated TODO - ([b131c02](https://github.com/timaliev/pcurl-get/commit/b131c0288d6615f1c8530d1b0c2c29a69a1e0f0a)) - github-actions[bot]
 
 ### Tests
 
