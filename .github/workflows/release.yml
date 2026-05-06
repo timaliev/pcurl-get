@@ -21,7 +21,7 @@ permissions:
 
 jobs:
   check-release:
-    name: Check if commits to be released are pushed or cancel workflow
+    name: Cancel workflow if pushed commits are not the commits to be released
     runs-on: ubuntu-latest
     outputs:
       cancel_workflow: ${{ steps.last-commit-tag.outputs.cancel_workflow == 'true' }}
@@ -56,7 +56,7 @@ jobs:
         with:
           release-tag: ${{ env.NEW_VERSION_TAG }}
 
-      - name: Verify version tag is on master
+      - name: Verify version tag is on master if this is a tag push
         if: "startsWith(github.ref, 'refs/tags/v') && steps.release-exists.outputs.release-exists == 'false'"
         id: verify-tag
         run: |
@@ -76,6 +76,7 @@ jobs:
           echo "cancel_workflow=true" >> "$GITHUB_OUTPUT"
           TAG_ON_MASTER="${is-on-master:-true}"
           if [ "${TAG_ON_MASTER}" = "false" ]; then
+            # Cancel workflow because after PR merge the tag must be on master
             exit 0
           fi
           TAGS_PR=$(git describe --tags --exact-match HEAD^1 2>/dev/null || true)
@@ -88,6 +89,7 @@ jobs:
                   echo "Found tag equal to NEW_VERSION=${NEW_VERSION_TAG} on HEAD ($(git rev-parse --short HEAD))"
                   echo "Continue to Release..."
                   echo "cancel_workflow=false" >> "$GITHUB_OUTPUT"
+                  # Do not cancel workflow
                   exit 0
                 fi
               done
@@ -98,6 +100,7 @@ jobs:
                 echo "Found tag equal to NEW_VERSION=${NEW_VERSION_TAG} on HEAD^1 ($(git rev-parse --short HEAD^1))"
                 echo "Continue to Release..."
                 echo "cancel_workflow=false" >> "$GITHUB_OUTPUT"
+                # Do not cancel workflow
                 exit 0
               fi
             done
@@ -175,10 +178,13 @@ jobs:
         with:
           cache-on-failure: true
 
+      - name: Install cargo-binstall
+        uses: cargo-bins/cargo-binstall@main
+
       - name: Setup git-cliff
         run: |
-          # Get git-cliff for this platform
-          cargo +stable install git-cliff
+          # Get git-cliff binary for this platform
+          cargo binstall git-cliff --no-confirm
           # Generate default configuration if repository doesn't have one
           if [ -f cliff.toml ]; then
             echo "git-cliff configuration $(pwd)/cliff.toml is present in this repository ('${{ github.repository }}' on '${{ github.ref_name }}' branch)"
@@ -225,7 +231,7 @@ jobs:
             if [[ "${i}" == *"-linux-"* ]]; then
               mv ${i} pcurl-get
               chmod +x pcurl-get
-              tar -zcvf pcurl-get "${i}.tar.gz"
+              tar -zcvf "${i}.tar.gz" pcurl-get
               rm -f pcurl-get
             else
               mv ${i} pcurl-get
