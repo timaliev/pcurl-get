@@ -18,6 +18,8 @@ jobs:
     if: github.event_name == 'push' && github.ref_name == 'release'
     name: Prepare build and set new release version
     runs-on: ubuntu-latest
+    outputs:
+      githubconf_commit: ${{ steps.conf-hash.outputs.commit_hash }}
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v6
@@ -49,10 +51,13 @@ jobs:
         with:
           cache-on-failure: true
 
+      - name: Install cargo-binstall
+        uses: cargo-bins/cargo-binstall@main
+
       - name: Setup git-cliff
         run: |
-          # Get git-cliff for this platform
-          cargo +stable install git-cliff
+          # Get git-cliff binary for this platform
+          cargo binstall git-cliff --no-confirm
           # Generate default configuration if repository doesn't have one
           if [ -f cliff.toml ]; then
             echo "git-cliff configuration $(pwd)/cliff.toml is present in this repository ('${{ github.repository }}' on '${{ github.ref_name }}' branch)"
@@ -105,7 +110,7 @@ jobs:
           echo "NEW_VERSION_TAG=$NEW_VERSION_TAG" >> "$GITHUB_ENV"
           echo "NEW_VERSION=$NEW_VERSION" >> "$GITHUB_ENV"
 
-      - name: Use the same version for existing release
+      - name: Use the same version for repeated push to the same release branch
         id: exist-version
         if: env.NEW_RELEASE == '0' && env.HAS_VERSION_FILE == '1'
         run: |
@@ -116,6 +121,36 @@ jobs:
           echo "NEW_VERSION_TAG=$NEW_VERSION_TAG" >> "$GITHUB_ENV"
           echo "NEW_VERSION=$NEW_VERSION" >> "$GITHUB_ENV"
 
+      - name: Check if release already exists
+        id: release-exists
+        uses: insightsengineering/release-existence-action@v1.0.0
+        with:
+          release-tag: ${{ env.NEW_VERSION_TAG }}
+
+      - name: Cancel this workflow run
+        # Cancel if release already exists
+        if: steps.release-exists.outputs.release-exists == 'true'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            core.info('Release with this tag found. Cancelling workflow run...')
+            await github.rest.actions.cancelWorkflowRun({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              run_id: context.runId
+            })
+
+      - name: Wait for cancellation
+        if: steps.release-exists.outputs.release-exists == 'true'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const delay = ms => new Promise(res => setTimeout(res, ms));
+            while (true) {
+              core.info('Waiting for workflow to cancel...');
+              await delay(5000);
+            }
+
       - name: Store version configuration in Git config
         run: |
           git config --file ${GITHUBCONF} githubconf.env.env4 "NEW_VERSION=${NEW_VERSION}"
@@ -123,18 +158,20 @@ jobs:
           git config --file ${GITHUBCONF} githubconf.env.env6 "RELEASE_RUN_ID=${{ github.run_id }}"
 
       - name: Save persistent Git configuration for later stages
+        id: conf-hash
         run: |
           # ls
           git add .github/config
           git commit -m "chore(github): store persistent state for GitHub Actions (run ID=${RELEASE_RUN_ID})" -- .github/config
           git push --force
+          echo "commit_hash=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
   build-for-release:
     name: Build for Release
     needs: pre-build
     runs-on: ${{ matrix.build.OS }}
     outputs:
-      upload-artifact-id: ${{ steps.artifact-upload.outputs.artifact-upload }}
+      githubconf_commit: ${{ needs.pre-build.outputs.githubconf_commit }}
     strategy:
       fail-fast: false
       matrix:
@@ -194,7 +231,8 @@ jobs:
         with:
           fetch-depth: 0
           fetch-tags: true
-          
+          ref: ${{ needs.pre-build.outputs.githubconf_commit }}
+
       - name: Where to store persistent Git configuration
         run: |
           touch .github/config
@@ -234,7 +272,7 @@ jobs:
       - name: Install dependencies (macOS)
         if: matrix.build.OS == 'macos-15'
         run: |
-          brew install gsed
+          brew install gnu-sed
           # uname -a
           # echo $PATH
           # rustup target add ${{ matrix.build.TARGET }}
@@ -254,13 +292,17 @@ jobs:
 
       - name: Update version in Cargo.toml (${{ env.NEW_VERSION_TAG }})
         run: |
-          if [[ "${{ matrix.build.OS }}" = "macos-"* ]]; then
-            # brew install gsed
-            gsed -E -i "s/^version = \"[^\"]*\"/version = \"${NEW_VERSION}\"/" Cargo.toml
-            sed -E "s/^version = \"[^\"]*\"/version = \"${NEW_VERSION}\"/" Cargo.toml | grep version
-          else
-            sed -E -i "s/^version = \"[^\"]*\"/version = \"${NEW_VERSION}\"/" Cargo.toml
-            grep -E '^version =' Cargo.toml
+          # Skip this step if no Cargo.toml found
+          if [ -f Cargo.toml ] || [ -f cargo.toml ]; then
+            CARGO_FILE=Cargo.toml
+            [ -f Cargo.toml ] || CARGO_FILE=cargo.toml
+            if [[ "${{ matrix.build.OS }}" = "macos-"* ]]; then
+              gsed -E -i "s/^version = \"[^\"]*\"/version = \"${NEW_VERSION}\"/" ${CARGO_FILE}
+              grep -E '^version =' ${CARGO_FILE}
+            else
+              sed -E -i "s/^version = \"[^\"]*\"/version = \"${NEW_VERSION}\"/" ${CARGO_FILE}
+              grep -E '^version =' ${CARGO_FILE}
+            fi
           fi
 
       - name: Install dependencies
@@ -311,10 +353,11 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout Repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           fetch-depth: 0
           fetch-tags: true
+          ref: ${{ needs.build-for-release.outputs.githubconf_commit }}
           
       - name: Where to store persistent Git configuration
         run: |
@@ -355,10 +398,13 @@ jobs:
         with:
           cache-on-failure: true
 
+      - name: Install cargo-binstall
+        uses: cargo-bins/cargo-binstall@main
+
       - name: Setup git-cliff
         run: |
-          # Get git-cliff for this platform
-          cargo  +stable install git-cliff
+          # Get git-cliff binary for this platform
+          cargo binstall git-cliff --no-confirm
           # Generate default configuration if repository doesn't have one
           if [ -f cliff.toml ]; then
             echo "git-cliff configuration $(pwd)/cliff.toml is present in this repository ('${{ github.repository }}' on '${{ github.ref_name }}' branch)"
@@ -456,7 +502,7 @@ jobs:
         run: |
           if [[ "${{ needs.prep-release.result }}" == "success" ]]; then
             echo "✅ Workflow succeeded"
-          elif [[ "${{ needs.post-release.result }}" == "cancelled" ]]; then
+          elif [[ "${{ needs.prep-release.result }}" == "cancelled" ]]; then
               echo "☑️ Workflow silently cancelled"
           else
             declare -A WF_RESULTS
