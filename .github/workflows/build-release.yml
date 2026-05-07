@@ -71,15 +71,15 @@ jobs:
         run: |
           git config --file ${GITHUBCONF} user.name "github-actions[bot]"
           git config --file ${GITHUBCONF} user.email "github-actions[bot]@users.noreply.github.com"
-          BASE_BRANCH=develop
-          echo "BASE_BRANCH=${BASE_BRANCH}" >> "$GITHUB_ENV"
-          git config --file ${GITHUBCONF} githubconf.env.env2 "BASE_BRANCH=${BASE_BRANCH}"
+          BASE_DEV_BRANCH=develop
+          echo "BASE_DEV_BRANCH=${BASE_DEV_BRANCH}" >> "$GITHUB_ENV"
+          git config --file ${GITHUBCONF} githubconf.env.env2 "BASE_DEV_BRANCH=${BASE_DEV_BRANCH}"
 
       - name: Detect new Release
         id: is-new-release
         run: |
           # Get commit count on this branch since diverging from `develop`
-          MERGE_BASE=$(git merge-base HEAD origin/$BASE_BRANCH 2>/dev/null || echo "$(git rev-parse HEAD)")
+          MERGE_BASE=$(git merge-base HEAD origin/$BASE_DEV_BRANCH 2>/dev/null || echo "$(git rev-parse HEAD)")
           COMMITS_SINCE_BRANCH=$(git rev-list --count $MERGE_BASE..HEAD)
           # Detect existing Release if it's subsequent push to current branch
           if [ "${COMMITS_SINCE_BRANCH}" -gt 1 ]; then
@@ -231,7 +231,7 @@ jobs:
         with:
           fetch-depth: 0
           fetch-tags: true
-          ref: ${{ needs.pre-build.outputs.githubconf_commit }}
+          # ref: ${{ needs.pre-build.outputs.githubconf_commit }}
 
       - name: Where to store persistent Git configuration
         run: |
@@ -245,6 +245,7 @@ jobs:
       - name: Setup Git from persistent configuration
         id: git-setup
         run: |
+          git checkout ${{ github.ref_name }} -- .github/config || true
           export "GITHUBCONF=${{ github.workspace }}/.github/config"
           echo -e "Git persistent state for env file is: ${GITHUBCONF}"
           echo "GITHUBCONF=${GITHUBCONF}" >> "$GITHUB_ENV"
@@ -252,7 +253,7 @@ jobs:
           export $(git config githubconf.env.env3)
           export $(git config githubconf.env.env4)
           export $(git config githubconf.env.env5)
-          echo "BASE_BRANCH=${BASE_BRANCH}" >> "$GITHUB_ENV"
+          echo "BASE_DEV_BRANCH=${BASE_DEV_BRANCH}" >> "$GITHUB_ENV"
           echo "NEW_RELEASE=${NEW_RELEASE}" >> "$GITHUB_ENV"
           echo "NEW_VERSION=${NEW_VERSION}" >> "$GITHUB_ENV"
           echo "NEW_VERSION_TAG=${NEW_VERSION_TAG}" >> "$GITHUB_ENV"
@@ -290,18 +291,18 @@ jobs:
           # Upload as artifact
           # echo "tool-path=$(pwd)/cargo_version" >> $GITHUB_ENV
 
-      - name: Update version in Cargo.toml (${{ env.NEW_VERSION_TAG }})
+      - name: Update version in Cargo.toml if present (${{ env.NEW_VERSION_TAG }})
         run: |
           # Skip this step if no Cargo.toml found
           if [ -f Cargo.toml ] || [ -f cargo.toml ]; then
             CARGO_FILE=Cargo.toml
             [ -f Cargo.toml ] || CARGO_FILE=cargo.toml
             if [[ "${{ matrix.build.OS }}" = "macos-"* ]]; then
-              gsed -E -i "s/^version = \"[^\"]*\"/version = \"${NEW_VERSION}\"/" ${CARGO_FILE}
-              grep -E '^version =' ${CARGO_FILE}
+              gsed -E -i "s/^version = \"[^\"]*\"/version = \"${NEW_VERSION}\"/" "${CARGO_FILE}"
+              grep -E '^version =' "${CARGO_FILE}"
             else
-              sed -E -i "s/^version = \"[^\"]*\"/version = \"${NEW_VERSION}\"/" ${CARGO_FILE}
-              grep -E '^version =' ${CARGO_FILE}
+              sed -E -i "s/^version = \"[^\"]*\"/version = \"${NEW_VERSION}\"/" "${CARGO_FILE}"
+              grep -E '^version =' "${CARGO_FILE}"
             fi
           fi
 
@@ -357,7 +358,7 @@ jobs:
         with:
           fetch-depth: 0
           fetch-tags: true
-          ref: ${{ needs.build-for-release.outputs.githubconf_commit }}
+          # ref: ${{ needs.build-for-release.outputs.githubconf_commit }}
           
       - name: Where to store persistent Git configuration
         run: |
@@ -371,6 +372,7 @@ jobs:
       - name: Setup Git from persistent configuration
         id: git-setup
         run: |
+          git checkout ${{ github.ref_name }} -- .github/config || true
           export "GITHUBCONF=${{ github.workspace }}/.github/config"
           echo -e "Git persistent state for env file is: ${GITHUBCONF}"
           echo "GITHUBCONF=${GITHUBCONF}" >> "$GITHUB_ENV"
@@ -378,7 +380,7 @@ jobs:
           export $(git config githubconf.env.env3)
           export $(git config githubconf.env.env4)
           export $(git config githubconf.env.env5)
-          echo "BASE_BRANCH=${BASE_BRANCH}" >> "$GITHUB_ENV"
+          echo "BASE_DEV_BRANCH=${BASE_DEV_BRANCH}" >> "$GITHUB_ENV"
           echo "NEW_RELEASE=${NEW_RELEASE}" >> "$GITHUB_ENV"
           echo "NEW_VERSION=${NEW_VERSION}" >> "$GITHUB_ENV"
           echo "NEW_VERSION_TAG=${NEW_VERSION_TAG}" >> "$GITHUB_ENV"
@@ -437,7 +439,7 @@ jobs:
         id: changelog
         run: |
           echo "Generating CHANGELOG.md..."
-          git-cliff --output CHANGELOG.md --exclude-path=".github/**/*"
+          git-cliff --output CHANGELOG.md --bump
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -483,7 +485,7 @@ jobs:
             release
             automated pr
           draft: false
-          delete-branch: true
+          delete-branch: false 
 
       - name: Save persistent Git configuration for later stages
         run: |
@@ -491,7 +493,8 @@ jobs:
           # ls
           git add .github/config
           git commit -m "chore(github): store persistent state for GitHub Actions +env7 (release PR ID=${RELEASE_PR_ID})" -- .github/config
-          git push --force
+          git push --force-with-lease origin HEAD:release 
+          # git push --force || true
 
   notify:
     needs: [pre-build, build-for-release, prep-release]
