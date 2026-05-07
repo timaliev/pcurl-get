@@ -3,7 +3,7 @@
 	email = github-actions[bot]@users.noreply.github.com
 [githubconf "env"]
 	env2 = BASE_BRANCH=develop
-	env3 = NEW_RELEASE=1
-	env4 = NEW_VERSION=0.3.0
-	env5 = NEW_VERSION_TAG=v0.3.0
-	env6 = RELEASE_RUN_ID=25463973130
+	env3 = NEW_RELEASE=0
+	env4 = NEW_VERSION=0.2.0+
+	env5 = NEW_VERSION_TAG=v0.2.0+
+	env6 = RELEASE_RUN_ID=25497043060
