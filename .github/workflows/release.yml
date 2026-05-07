@@ -164,7 +164,7 @@ jobs:
           export $(git config githubconf.env.env4)
           export $(git config githubconf.env.env5)
           export $(git config githubconf.env.env6)
-          echo "BASE_BRANCH=${BASE_BRANCH}" >> "$GITHUB_ENV"
+          echo "BASE_DEV_BRANCH=${BASE_DEV_BRANCH}" >> "$GITHUB_ENV"
           echo "NEW_RELEASE=${NEW_RELEASE}" >> "$GITHUB_ENV"
           echo "NEW_VERSION=${NEW_VERSION}" >> "$GITHUB_ENV"
           echo "NEW_VERSION_TAG=${NEW_VERSION_TAG}" >> "$GITHUB_ENV"
@@ -284,26 +284,32 @@ jobs:
           export $(git config githubconf.env.env3)
           export $(git config githubconf.env.env4)
           export $(git config githubconf.env.env5)
-          echo "BASE_BRANCH=${BASE_BRANCH}" >> "$GITHUB_ENV"
+          echo "BASE_DEV_BRANCH=${BASE_DEV_BRANCH}" >> "$GITHUB_ENV"
           echo "NEW_RELEASE=${NEW_RELEASE}" >> "$GITHUB_ENV"
           echo "NEW_VERSION=${NEW_VERSION}" >> "$GITHUB_ENV"
           echo "NEW_VERSION_TAG=${NEW_VERSION_TAG}" >> "$GITHUB_ENV"
 
       - name: Merge back to base development branch
         run: |
+          # Next two steps done with the actions/checkout@v6 above
           # git checkout master
           # git pull
-          # Done with the actions/checkout@v6 above
-          git checkout "${BASE_BRANCH}"
-          git merge ${{ github.ref_name }}  # Brings in version tag and changelog
+          git checkout "${BASE_DEV_BRANCH}"
+          # Merge the master branch into the base development branch, preferring master's version of files
+          git merge -Xtheirs ${{ github.ref_name }} # Brings in version tag and changelog
           # Bump version toward next release by incrementing patch level (semver)
           IFS='.' read -r MAJOR MINOR PATCH <<< "${NEW_VERSION}"
           NEW_VERSION="${MAJOR}.${MINOR}.$((PATCH + 1))"
-          sed -E -i "s/^version = \"[^\"]*\"/version = \"${NEW_VERSION}\"/" Cargo.toml
+          # Skip this step if no Cargo.toml found
+          if [ -f Cargo.toml ] || [ -f cargo.toml ]; then
+            CARGO_FILE=Cargo.toml
+            [ -f Cargo.toml ] || CARGO_FILE=cargo.toml
+            sed -E -i "s/^version = \"[^\"]*\"/version = \"${NEW_VERSION}\"/" "${CARGO_FILE}"
+          fi
           echo ${NEW_VERSION} > VERSION
-          git add VERSION Cargo.toml
-          git commit -m "chore(version): bump version toward next release" -- VERSION Cargo.toml
-          # Push everything to origin/${BASE_BRANCH}
+          git add VERSION "${CARGO_FILE}"
+          git commit -m "chore(version): bump version toward next release" -- VERSION "${CARGO_FILE}"
+          # Push everything to origin/${BASE_DEV_BRANCH}
           git push --all origin
           # Force delete `release` branch if possible
           # git branch -D release || true
