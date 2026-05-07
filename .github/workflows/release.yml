@@ -197,7 +197,7 @@ jobs:
         id: release-notes
         run: |
           echo "Generating release notes..."
-          RELEASE_NOTES="$(git-cliff --config github --latest --exclude-path=".github/**/*")\n\n"
+          RELEASE_NOTES="$(git-cliff --config github --latest)\n\n"
           RELEASE_NOTES+="### Platforms\n\n"
           RELEASE_NOTES+="- Linux x86-64 gnu-libc\n"
           RELEASE_NOTES+="- Linux x86-64 musl (static)\n"
@@ -215,12 +215,20 @@ jobs:
 
       - name: Download binaries built for different platforms
         uses: actions/download-artifact@v8
+        continue-on-error: true
         with:
           pattern: pcurl-get-*
           path: tmp/assets/
           merge-multiple: true
           run-id: ${{ env.RELEASE_RUN_ID }}
           github-token: ${{ secrets.GITHUB_TOKEN }}
+      
+      - name: Artifact expired - rebuild
+        if: steps.download.outcome == 'failure'
+        run: |
+          echo "Artifact expired, triggering rebuild..."
+          echo "For now exit with failure"
+          exit 1
 
       - name: Platform specific compression (Linux/Macos)
         run: |
