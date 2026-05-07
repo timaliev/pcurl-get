@@ -170,7 +170,7 @@ jobs:
         run: |
           # ls
           git add .github/config
-          git commit -m "chore(github): store persistent state for GitHub Actions (run ID=${RELEASE_RUN_ID})" -- .github/config
+          git commit -m "chore(github): store persistent state for GitHub Actions (run ID=${{ github.run_id }})" -- .github/config
           git push --force
           echo "commit_hash=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
