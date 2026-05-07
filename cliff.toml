@@ -105,6 +105,7 @@ commit_parsers = [
     { body = ".*security", group = "Security" },
     { message = "^chore\\(version\\):", skip = true },
     { message = "^chore\\(wip\\):", skip = true },
+    { message = "^chore\\((github|build)\\)", group = "<!-- 7 --> GitHub Workflow" },
     { message = "^chore", group = "<!-- 8 --> Miscellaneous Chores" },
     { message = "^Merge pull request", skip = true },
     { message = "(^Update |^Create ).*\\.(yaml|yml)$", skip = true },
