@@ -2,7 +2,6 @@ name: PCurl-Get build
 run-name: ${{ github.event_name }} by @${{ github.actor }} to ${{ github.ref_name }}
 
 on:
-  # workflow_dispatch:
   push:
     branches: [ release ]
 
@@ -20,7 +19,7 @@ jobs:
     name: Prepare build and set new release version
     runs-on: ubuntu-latest
     outputs:
-      githubconf_commit: ${{ steps.conf-hash.outputs.commit_hash }}
+      githubconf_content: ${{ steps.githubconf-save.outputs.githubconf_content }}
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v6
@@ -165,21 +164,20 @@ jobs:
           git config --file ${GITHUBCONF} githubconf.env.env5 "NEW_VERSION_TAG=${NEW_VERSION_TAG}"
           git config --file ${GITHUBCONF} githubconf.env.env6 "RELEASE_RUN_ID=${{ github.run_id }}"
 
-      - name: Save persistent Git configuration for later stages
-        id: conf-hash
+      - name: Save persistent Git configuration for later jobs in workflow
+        id: githubconf-save
         run: |
-          # ls
-          git add .github/config
-          git commit -m "chore(github): store persistent state for GitHub Actions (run ID=${{ github.run_id }})" -- .github/config
-          git push --force
-          echo "commit_hash=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          echo "githubconf_content=$(cat ${GITHUBCONF})" >>"$GITHUB_OUTPUT"
+          # git commit -m "chore(github): store persistent state for GitHub Actions (run ID=${{ github.run_id }})" -- .github/config
+          # git push --force
+          # echo "commit_hash=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
   build-for-release:
     name: Build for Release
     needs: pre-build
     runs-on: ${{ matrix.build.OS }}
     outputs:
-      githubconf_commit: ${{ needs.pre-build.outputs.githubconf_commit }}
+      githubconf_content: ${{ needs.pre-build.outputs.githubconf_content }}
     strategy:
       fail-fast: false
       matrix:
@@ -239,7 +237,6 @@ jobs:
         with:
           fetch-depth: 0
           fetch-tags: true
-          # ref: ${{ needs.pre-build.outputs.githubconf_commit }}
 
       - name: Where to store persistent Git configuration
         run: |
@@ -253,7 +250,9 @@ jobs:
       - name: Setup Git from persistent configuration
         id: git-setup
         run: |
-          git checkout ${{ github.ref_name }} -- .github/config || true
+          cat <<EOF | tee .github/config
+          ${{ needs.pre-build.outputs.githubconf_content }}
+          EOF
           export "GITHUBCONF=${{ github.workspace }}/.github/config"
           echo -e "Git persistent state for env file is: ${GITHUBCONF}"
           echo "GITHUBCONF=${GITHUBCONF}" >> "$GITHUB_ENV"
@@ -380,7 +379,10 @@ jobs:
       - name: Setup Git from persistent configuration
         id: git-setup
         run: |
-          git checkout ${{ github.ref_name }} -- .github/config || true
+          # git checkout ${{ github.ref_name }} -- .github/config || true
+          cat <<EOF | tee .github/config
+          ${{ needs.build-for-release.outputs.githubconf_content }}
+          EOF
           export "GITHUBCONF=${{ github.workspace }}/.github/config"
           echo -e "Git persistent state for env file is: ${GITHUBCONF}"
           echo "GITHUBCONF=${GITHUBCONF}" >> "$GITHUB_ENV"
@@ -425,8 +427,8 @@ jobs:
 
       - name: Create/update version tag
         run: |
-          # Add new tag for release (all possible tags on this branch where deleted in step
-          # 'Delete all tags on this release branch')
+          # Add new tag for release (all possible tags on this branch where deleted
+          # in step 'Delete all tags on this release branch')
           # No workflow is triggered by this push because
           # we are within workflow (rule to prevent infinite loops)
           # See https://github.com/orgs/community/discussions/27028
@@ -437,7 +439,7 @@ jobs:
         id: changelog
         run: |
           echo "Generating CHANGELOG.md..."
-          git-cliff --output CHANGELOG.md --bump
+          git-cliff --output CHANGELOG.md --tag-pattern="^v\\d+\\.\\d+\\.\\d+$"
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -487,12 +489,12 @@ jobs:
 
       - name: Save persistent Git configuration for later stages
         run: |
-          git config --file ${GITHUBCONF} githubconf.env.env7 "RELEASE_PR_ID=${{ steps.release-pr.outputs.pull-request-number }}"
-          # ls
+          RELEASE_PR_ID="${{ steps.release-pr.outputs.pull-request-number }}"
+          git config --file ${GITHUBCONF} githubconf.env.env7 "RELEASE_PR_ID=${RELEASE_PR_ID}"
           git add .github/config
           git commit -m "chore(github): store persistent state for GitHub Actions +env7 (release PR ID=${RELEASE_PR_ID})" -- .github/config
-          git push --force-with-lease origin HEAD:release 
-          # git push --force || true
+          # git push --force-with-lease origin HEAD:release 
+          git push --force || true
 
   notify:
     needs: [pre-build, build-for-release, prep-release]
