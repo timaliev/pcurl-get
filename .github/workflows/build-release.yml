@@ -58,7 +58,10 @@ jobs:
       - name: Setup git-cliff
         run: |
           # Get git-cliff binary for this platform
-          cargo binstall git-cliff --no-confirm
+          cargo binstall git-cliff --no-confirm --force
+          command -v git-cliff || true
+          git-cliff --version || true
+          git cliff --bumped-version || true
           # Generate default configuration if repository doesn't have one
           if [ -f cliff.toml ]; then
             echo "git-cliff configuration $(pwd)/cliff.toml is present in this repository ('${{ github.repository }}' on '${{ github.ref_name }}' branch)"
@@ -119,7 +122,7 @@ jobs:
       - name: Bump version for new release using git-cliff
         id: new-version
         run: |
-          NEW_VERSION_TAG="$(git-cliff --bumped-version)"
+          NEW_VERSION_TAG="$(git cliff --bumped-version)"
           NEW_VERSION=$(echo ${NEW_VERSION_TAG} | sed -E 's/^v//')
           echo "New version tag: $NEW_VERSION_TAG"
           echo "New version: $NEW_VERSION"
