@@ -2,7 +2,6 @@ name: PCurl-Get build
 run-name: ${{ github.event_name }} by @${{ github.actor }} to ${{ github.ref_name }}
 
 on:
-  # workflow_dispatch:
   push:
     branches: [ release ]
 
@@ -12,12 +11,15 @@ permissions:
   actions: write
   id-token: write
   attestations: write
+  artifact-metadata: write
 
 jobs:
   pre-build:
     if: github.event_name == 'push' && github.ref_name == 'release'
     name: Prepare build and set new release version
     runs-on: ubuntu-latest
+    outputs:
+      githubconf_content: ${{ steps.githubconf-save.outputs.githubconf_content }}
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v6
@@ -49,10 +51,14 @@ jobs:
         with:
           cache-on-failure: true
 
+      - name: Install cargo-binstall
+        uses: cargo-bins/cargo-binstall@main
+
       - name: Setup git-cliff
         run: |
-          # Get git-cliff for this platform
-          cargo +stable install git-cliff
+          # Get git-cliff binary for this platform
+          cargo binstall git-cliff --no-confirm --force
+          command -v git-cliff
           # Generate default configuration if repository doesn't have one
           if [ -f cliff.toml ]; then
             echo "git-cliff configuration $(pwd)/cliff.toml is present in this repository ('${{ github.repository }}' on '${{ github.ref_name }}' branch)"
@@ -66,21 +72,25 @@ jobs:
         run: |
           git config --file ${GITHUBCONF} user.name "github-actions[bot]"
           git config --file ${GITHUBCONF} user.email "github-actions[bot]@users.noreply.github.com"
-          BASE_BRANCH=develop
-          echo "BASE_BRANCH=${BASE_BRANCH}" >> "$GITHUB_ENV"
-          git config --file ${GITHUBCONF} githubconf.env.env2 "BASE_BRANCH=${BASE_BRANCH}"
+          BASE_DEV_BRANCH=develop
+          echo "BASE_DEV_BRANCH=${BASE_DEV_BRANCH}" >> "$GITHUB_ENV"
+          git config --file ${GITHUBCONF} githubconf.env.env2 "BASE_DEV_BRANCH=${BASE_DEV_BRANCH}"
 
       - name: Detect new Release
         id: is-new-release
         run: |
           # Get commit count on this branch since diverging from `develop`
-          MERGE_BASE=$(git merge-base HEAD origin/$BASE_BRANCH 2>/dev/null || echo "$(git rev-parse HEAD)")
+          MERGE_BASE=$(git merge-base HEAD origin/$BASE_DEV_BRANCH 2>/dev/null || echo "$(git rev-parse HEAD)")
           COMMITS_SINCE_BRANCH=$(git rev-list --count $MERGE_BASE..HEAD)
           # Detect existing Release if it's subsequent push to current branch
           if [ "${COMMITS_SINCE_BRANCH}" -gt 1 ]; then
             NEW_RELEASE=0
             echo "COMMITS_SINCE_BRANCH=${COMMITS_SINCE_BRANCH}"
             echo "Running existing Release job on '${{ github.ref_name }}'"
+            # git describe --tags --abbrev=0 HEAD^ 2>/dev/null | head -10
+            # Display 10 most recent tags
+            echo "Top 10 most recent tags in repository"
+            git -P tag --format='%(refname:short) (%(objectname:short)) %(creatordate:short)' --sort=-creatordate | head -10
           else
             NEW_RELEASE=1
             echo "COMMITS_SINCE_BRANCH=${COMMITS_SINCE_BRANCH}"
@@ -88,33 +98,68 @@ jobs:
           fi
           echo "NEW_RELEASE=${NEW_RELEASE}" >> "$GITHUB_ENV"
           git config --file ${GITHUBCONF} githubconf.env.env3 "NEW_RELEASE=${NEW_RELEASE}"
-          if [ -f VERSION ]; then
-            echo "HAS_VERSION_FILE=1" >> "$GITHUB_ENV"
-          else
-            echo "HAS_VERSION_FILE=0" >> "$GITHUB_ENV"
+
+      - name: Delete all tags on this release branch
+        id: delete-tags-on-branch
+        run: |
+          # git describe --tags --abbrev=0 HEAD^ 2>/dev/null | head -10
+          # Display 10 most recent tags
+          echo "Top 10 most recent tags in repository"
+          git -P tag --format='%(refname:short) (%(objectname:short)) %(creatordate:short)' --sort=-creatordate | head -10
+          echo
+          echo "Delete all version tags on this release branch"
+          TAGS_ON_BRANCH=$(git -P tag --contains ${MERGE_BASE})
+          if [ -n "${TAGS_ON_BRANCH}" ]; then
+            echo "Tags on this release branch: ${TAGS_ON_BRANCH}"
+            for tag in "${TAGS_ON_BRANCH}"; do
+              [[ ${tag} = "v"*"."*"."* ]] || continue
+              echo "Deleting version tag: ${tag}"
+            # Ensure version tags does not exist on current branch
+            # See https://git-scm.com/book/en/v2/Git-Basics-Tagging
+              git tag -d "${tag}" || true
+              git push origin --delete "${tag}" || true
+            done
           fi
 
       - name: Bump version for new release using git-cliff
         id: new-version
-        if: env.NEW_RELEASE == '1' || env.HAS_VERSION_FILE == '0'
         run: |
-          NEW_VERSION_TAG="$(git-cliff --bumped-version)"
+          NEW_VERSION_TAG="$(git cliff --bumped-version)"
           NEW_VERSION=$(echo ${NEW_VERSION_TAG} | sed -E 's/^v//')
           echo "New version tag: $NEW_VERSION_TAG"
           echo "New version: $NEW_VERSION"
           echo "NEW_VERSION_TAG=$NEW_VERSION_TAG" >> "$GITHUB_ENV"
           echo "NEW_VERSION=$NEW_VERSION" >> "$GITHUB_ENV"
 
-      - name: Use the same version for existing release
-        id: exist-version
-        if: env.NEW_RELEASE == '0' && env.HAS_VERSION_FILE == '1'
-        run: |
-          NEW_VERSION="$(cat VERSION)"
-          NEW_VERSION_TAG="v${NEW_VERSION}"
-          echo "New version tag: $NEW_VERSION_TAG"
-          echo "New version: $NEW_VERSION"
-          echo "NEW_VERSION_TAG=$NEW_VERSION_TAG" >> "$GITHUB_ENV"
-          echo "NEW_VERSION=$NEW_VERSION" >> "$GITHUB_ENV"
+      - name: Check if release already exists
+        id: release-exists
+        uses: insightsengineering/release-existence-action@v1.0.0
+        with:
+          release-tag: ${{ env.NEW_VERSION_TAG }}
+
+      - name: Cancel this workflow run
+        # Cancel if release already exists
+        if: steps.release-exists.outputs.release-exists == 'true'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            core.info('Release with this tag found. Cancelling workflow run...')
+            await github.rest.actions.cancelWorkflowRun({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              run_id: context.runId
+            })
+
+      - name: Wait for cancellation
+        if: steps.release-exists.outputs.release-exists == 'true'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const delay = ms => new Promise(res => setTimeout(res, ms));
+            while (true) {
+              core.info('Waiting for workflow to cancel...');
+              await delay(5000);
+            }
 
       - name: Store version configuration in Git config
         run: |
@@ -122,19 +167,19 @@ jobs:
           git config --file ${GITHUBCONF} githubconf.env.env5 "NEW_VERSION_TAG=${NEW_VERSION_TAG}"
           git config --file ${GITHUBCONF} githubconf.env.env6 "RELEASE_RUN_ID=${{ github.run_id }}"
 
-      - name: Save persistent Git configuration for later stages
+      - name: Save persistent Git configuration for later jobs in workflow
+        id: githubconf-save
         run: |
-          # ls
-          git add .github/config
-          git commit -m "chore(github): store persistent state for GitHub Actions (run ID=${RELEASE_RUN_ID})" -- .github/config
-          git push --force
+          echo "githubconf_content<<EOF" >>"$GITHUB_OUTPUT"
+          cat ${GITHUBCONF} >>"$GITHUB_OUTPUT"
+          echo "EOF" >>"$GITHUB_OUTPUT"
 
   build-for-release:
     name: Build for Release
     needs: pre-build
     runs-on: ${{ matrix.build.OS }}
     outputs:
-      upload-artifact-id: ${{ steps.artifact-upload.outputs.artifact-upload }}
+      githubconf_content: ${{ needs.pre-build.outputs.githubconf_content }}
     strategy:
       fail-fast: false
       matrix:
@@ -194,7 +239,7 @@ jobs:
         with:
           fetch-depth: 0
           fetch-tags: true
-          
+
       - name: Where to store persistent Git configuration
         run: |
           touch .github/config
@@ -207,6 +252,9 @@ jobs:
       - name: Setup Git from persistent configuration
         id: git-setup
         run: |
+          cat <<EOF | tee .github/config
+          ${{ needs.pre-build.outputs.githubconf_content }}
+          EOF
           export "GITHUBCONF=${{ github.workspace }}/.github/config"
           echo -e "Git persistent state for env file is: ${GITHUBCONF}"
           echo "GITHUBCONF=${GITHUBCONF}" >> "$GITHUB_ENV"
@@ -214,7 +262,7 @@ jobs:
           export $(git config githubconf.env.env3)
           export $(git config githubconf.env.env4)
           export $(git config githubconf.env.env5)
-          echo "BASE_BRANCH=${BASE_BRANCH}" >> "$GITHUB_ENV"
+          echo "BASE_DEV_BRANCH=${BASE_DEV_BRANCH}" >> "$GITHUB_ENV"
           echo "NEW_RELEASE=${NEW_RELEASE}" >> "$GITHUB_ENV"
           echo "NEW_VERSION=${NEW_VERSION}" >> "$GITHUB_ENV"
           echo "NEW_VERSION_TAG=${NEW_VERSION_TAG}" >> "$GITHUB_ENV"
@@ -234,7 +282,7 @@ jobs:
       - name: Install dependencies (macOS)
         if: matrix.build.OS == 'macos-15'
         run: |
-          brew install gsed
+          brew install gnu-sed
           # uname -a
           # echo $PATH
           # rustup target add ${{ matrix.build.TARGET }}
@@ -252,15 +300,19 @@ jobs:
           # Upload as artifact
           # echo "tool-path=$(pwd)/cargo_version" >> $GITHUB_ENV
 
-      - name: Update version in Cargo.toml (${{ env.NEW_VERSION_TAG }})
+      - name: Update version in Cargo.toml if present (${{ env.NEW_VERSION_TAG }})
         run: |
-          if [[ "${{ matrix.build.OS }}" = "macos-"* ]]; then
-            # brew install gsed
-            gsed -E -i "s/^version = \"[^\"]*\"/version = \"${NEW_VERSION}\"/" Cargo.toml
-            sed -E "s/^version = \"[^\"]*\"/version = \"${NEW_VERSION}\"/" Cargo.toml | grep version
-          else
-            sed -E -i "s/^version = \"[^\"]*\"/version = \"${NEW_VERSION}\"/" Cargo.toml
-            grep -E '^version =' Cargo.toml
+          # Skip this step if no Cargo.toml found
+          if [ -f Cargo.toml ] || [ -f cargo.toml ]; then
+            CARGO_FILE=Cargo.toml
+            [ -f Cargo.toml ] || CARGO_FILE=cargo.toml
+            if [[ "${{ matrix.build.OS }}" = "macos-"* ]]; then
+              gsed -E -i "s/^version = \"[^\"]*\"/version = \"${NEW_VERSION}\"/" "${CARGO_FILE}"
+              grep -E '^version =' "${CARGO_FILE}"
+            else
+              sed -E -i "s/^version = \"[^\"]*\"/version = \"${NEW_VERSION}\"/" "${CARGO_FILE}"
+              grep -E '^version =' "${CARGO_FILE}"
+            fi
           fi
 
       - name: Install dependencies
@@ -311,10 +363,11 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout Repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           fetch-depth: 0
           fetch-tags: true
+          # ref: ${{ needs.build-for-release.outputs.githubconf_commit }}
           
       - name: Where to store persistent Git configuration
         run: |
@@ -328,6 +381,9 @@ jobs:
       - name: Setup Git from persistent configuration
         id: git-setup
         run: |
+          cat <<EOF | tee .github/config
+          ${{ needs.build-for-release.outputs.githubconf_content }}
+          EOF
           export "GITHUBCONF=${{ github.workspace }}/.github/config"
           echo -e "Git persistent state for env file is: ${GITHUBCONF}"
           echo "GITHUBCONF=${GITHUBCONF}" >> "$GITHUB_ENV"
@@ -335,10 +391,12 @@ jobs:
           export $(git config githubconf.env.env3)
           export $(git config githubconf.env.env4)
           export $(git config githubconf.env.env5)
-          echo "BASE_BRANCH=${BASE_BRANCH}" >> "$GITHUB_ENV"
+          export $(git config githubconf.env.env6)
+          echo "BASE_DEV_BRANCH=${BASE_DEV_BRANCH}" >> "$GITHUB_ENV"
           echo "NEW_RELEASE=${NEW_RELEASE}" >> "$GITHUB_ENV"
           echo "NEW_VERSION=${NEW_VERSION}" >> "$GITHUB_ENV"
           echo "NEW_VERSION_TAG=${NEW_VERSION_TAG}" >> "$GITHUB_ENV"
+          echo "RELEASE_RUN_ID=${RELEASE_RUN_ID}" >> "$GITHUB_ENV"
           # We are going to commit to this branch so update .gitignore if needed
           touch .gitignore
           # Ensure tmp directory used for GitHub workflows is excluded
@@ -355,10 +413,13 @@ jobs:
         with:
           cache-on-failure: true
 
+      - name: Install cargo-binstall
+        uses: cargo-bins/cargo-binstall@main
+
       - name: Setup git-cliff
         run: |
-          # Get git-cliff for this platform
-          cargo  +stable install git-cliff
+          # Get git-cliff binary for this platform
+          cargo binstall git-cliff --no-confirm
           # Generate default configuration if repository doesn't have one
           if [ -f cliff.toml ]; then
             echo "git-cliff configuration $(pwd)/cliff.toml is present in this repository ('${{ github.repository }}' on '${{ github.ref_name }}' branch)"
@@ -367,31 +428,11 @@ jobs:
             echo "Created git-cliff default configuration: $(pwd)/cliff.toml"
           fi
 
-      - name: Create/update version tag
-        run: |
-          # git describe --tags --abbrev=0 HEAD^ 2>/dev/null | head -10
-          # Display 10 most recent tags
-          echo "Top 10 most recent tags in repository"
-          git -P tag --format='%(refname:short) %(creatordate:short)' --sort=-creatordate | head -10
-          # Ensure version tag does not exist on current branch
-          # See https://git-scm.com/book/en/v2/Git-Basics-Tagging
-          git tag -d "${NEW_VERSION_TAG}" || true
-          git push origin --delete "${NEW_VERSION_TAG}" || true
-          sleep 3
-          # Add new tag for release
-          # No workflow is triggered by this push because
-          # we are within workflow (rule to prevent infinite loops)
-          # See https://github.com/orgs/community/discussions/27028
-          git tag -f -a "${NEW_VERSION_TAG}" -m "Release ${NEW_VERSION_TAG}"
-          git push origin "${NEW_VERSION_TAG}" || true
-          # Create VERSION file in the root of repo for possible subsequent pushes to this release
-          echo ${NEW_VERSION} > VERSION
-
       - name: Generate CHANGELOG with git-cliff excluding github workflows
         id: changelog
         run: |
           echo "Generating CHANGELOG.md..."
-          git-cliff --output CHANGELOG.md --exclude-path=".github/**/*"
+          git-cliff --output CHANGELOG.md --bump --tag-pattern="^v\\d+\\.\\d+\\.\\d+$"
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -407,8 +448,17 @@ jobs:
         run: |
           git add VERSION CHANGELOG.md
           git commit -m "chore(version): for release ${NEW_VERSION_TAG}" -- VERSION CHANGELOG.md
-          # git push --tags origin ${{ github.ref_name }}
           # Push will be performed by next step: peter-evans/create-pull-request@v5
+
+      - name: Create/update version tag
+        run: |
+          # Add new tag for release (all possible tags on this branch where deleted
+          # in step 'Delete all tags on this release branch')
+          # No workflow is triggered by this push because
+          # we are within workflow (rule to prevent infinite loops)
+          # See https://github.com/orgs/community/discussions/27028
+          git tag -f -a "${NEW_VERSION_TAG}" -m "Release ${NEW_VERSION_TAG}"
+          git push --force origin "${NEW_VERSION_TAG}" || true
 
       - name: Create PR from release to master
         id: release-pr
@@ -437,15 +487,17 @@ jobs:
             release
             automated pr
           draft: false
-          delete-branch: true
+          delete-branch: false 
 
       - name: Save persistent Git configuration for later stages
         run: |
-          git config --file ${GITHUBCONF} githubconf.env.env7 "RELEASE_PR_ID=${{ steps.release-pr.outputs.pull-request-number }}"
-          # ls
+          RELEASE_PR_ID="${{ steps.release-pr.outputs.pull-request-number }}"
+          git config --file ${GITHUBCONF} githubconf.env.env7 "RELEASE_PR_ID=${RELEASE_PR_ID}"
+          git switch -c githubconfig
           git add .github/config
-          git commit -m "chore(github): store persistent state for GitHub Actions +env7 (release PR ID=${RELEASE_PR_ID})" -- .github/config
-          git push --force
+          git commit -m "chore(github): store persistent state for GitHub Actions (RUN ID=${RELEASE_RUN_ID} release PR ID=${RELEASE_PR_ID})" -- .github/config
+          # git push --force-with-lease origin HEAD:release 
+          git push --force --set-upstream origin githubconfig || true
 
   notify:
     needs: [pre-build, build-for-release, prep-release]
@@ -456,7 +508,7 @@ jobs:
         run: |
           if [[ "${{ needs.prep-release.result }}" == "success" ]]; then
             echo "✅ Workflow succeeded"
-          elif [[ "${{ needs.post-release.result }}" == "cancelled" ]]; then
+          elif [[ "${{ needs.prep-release.result }}" == "cancelled" ]]; then
               echo "☑️ Workflow silently cancelled"
           else
             declare -A WF_RESULTS
