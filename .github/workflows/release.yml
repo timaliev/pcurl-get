@@ -10,7 +10,7 @@ on:
 # Cancel any currently running workflow(s) if the new one is started
 concurrency:
   # group: ${{ github.workflow }}-${{ github.ref }}
-  # Only one workflows for `master` branch
+  # Only one workflows for `master` branch or version tag
   group: ${{ github.ref }}
   cancel-in-progress: true
 
@@ -44,6 +44,7 @@ jobs:
       - name: Setup Git
         id: git-setup
         run: |
+          git checkout origin/githubconfig -- .github/config
           echo -e "Git persistent state for env file is: ${{ github.workspace }}/.github/config"
           export "GITHUBCONF=${{ github.workspace }}/.github/config"
           echo "GITHUBCONF=${GITHUBCONF}" >> "$GITHUB_ENV"
@@ -156,6 +157,7 @@ jobs:
       - name: Setup Git
         id: git-setup
         run: |
+          git checkout origin/githubconfig -- .github/config          
           export "GITHUBCONF=${{ github.workspace }}/.github/config"
           echo -e "Git persistent state for env file is: ${GITHUBCONF}"
           echo "GITHUBCONF=${GITHUBCONF}" >> "$GITHUB_ENV"
@@ -197,7 +199,7 @@ jobs:
         id: release-notes
         run: |
           echo "Generating release notes..."
-          RELEASE_NOTES="$(git-cliff --config github --latest)\n\n"
+          RELEASE_NOTES="$(git-cliff --config github --latest --tag-pattern="^v\\d+\\.\\d+\\.\\d+$")\n\n"
           RELEASE_NOTES+="### Platforms\n\n"
           RELEASE_NOTES+="- Linux x86-64 gnu-libc\n"
           RELEASE_NOTES+="- Linux x86-64 musl (static)\n"
@@ -286,6 +288,7 @@ jobs:
       - name: Setup Git
         id: git-setup
         run: |
+          git checkout origin/githubconfig -- .github/config
           echo -e "Git persistent state for env file is: ${{ github.workspace }}/.github/config"
           echo "GITHUBCONF=${{ github.workspace }}/.github/config" >> "$GITHUB_ENV"
           export $(git config githubconf.env.env2)
@@ -319,9 +322,10 @@ jobs:
           git commit -m "chore(version): bump version toward next release" -- VERSION "${CARGO_FILE}"
           # Push everything to origin/${BASE_DEV_BRANCH}
           git push --all origin
-          # Force delete `release` branch if possible
+          # Force delete `release` and `githubconfig` branches if possible
           # git branch -D release || true
           git branch -r -D origin/release || true
+          git branch -r -D origin/githubconfig || true
 
   notify:
     needs: [check-release, just-release, post-release]
