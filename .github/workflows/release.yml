@@ -10,7 +10,7 @@ on:
 # Cancel any currently running workflow(s) if the new one is started
 concurrency:
   # group: ${{ github.workflow }}-${{ github.ref }}
-  # Only one workflows for `master` branch
+  # Only one workflows for `master` branch or version tag
   group: ${{ github.ref }}
   cancel-in-progress: true
 
@@ -21,7 +21,7 @@ permissions:
 
 jobs:
   check-release:
-    name: Check if commits to be released are pushed or cancel workflow
+    name: Cancel workflow if pushed commits are not the commits to be released
     runs-on: ubuntu-latest
     outputs:
       cancel_workflow: ${{ steps.last-commit-tag.outputs.cancel_workflow == 'true' }}
@@ -44,6 +44,7 @@ jobs:
       - name: Setup Git
         id: git-setup
         run: |
+          git checkout origin/githubconfig -- .github/config
           echo -e "Git persistent state for env file is: ${{ github.workspace }}/.github/config"
           export "GITHUBCONF=${{ github.workspace }}/.github/config"
           echo "GITHUBCONF=${GITHUBCONF}" >> "$GITHUB_ENV"
@@ -56,7 +57,7 @@ jobs:
         with:
           release-tag: ${{ env.NEW_VERSION_TAG }}
 
-      - name: Verify version tag is on master
+      - name: Verify version tag is on master if this is a tag push
         if: "startsWith(github.ref, 'refs/tags/v') && steps.release-exists.outputs.release-exists == 'false'"
         id: verify-tag
         run: |
@@ -76,6 +77,7 @@ jobs:
           echo "cancel_workflow=true" >> "$GITHUB_OUTPUT"
           TAG_ON_MASTER="${is-on-master:-true}"
           if [ "${TAG_ON_MASTER}" = "false" ]; then
+            # Cancel workflow because after PR merge the tag must be on master
             exit 0
           fi
           TAGS_PR=$(git describe --tags --exact-match HEAD^1 2>/dev/null || true)
@@ -88,6 +90,7 @@ jobs:
                   echo "Found tag equal to NEW_VERSION=${NEW_VERSION_TAG} on HEAD ($(git rev-parse --short HEAD))"
                   echo "Continue to Release..."
                   echo "cancel_workflow=false" >> "$GITHUB_OUTPUT"
+                  # Do not cancel workflow
                   exit 0
                 fi
               done
@@ -98,6 +101,7 @@ jobs:
                 echo "Found tag equal to NEW_VERSION=${NEW_VERSION_TAG} on HEAD^1 ($(git rev-parse --short HEAD^1))"
                 echo "Continue to Release..."
                 echo "cancel_workflow=false" >> "$GITHUB_OUTPUT"
+                # Do not cancel workflow
                 exit 0
               fi
             done
@@ -153,6 +157,7 @@ jobs:
       - name: Setup Git
         id: git-setup
         run: |
+          git checkout origin/githubconfig -- .github/config          
           export "GITHUBCONF=${{ github.workspace }}/.github/config"
           echo -e "Git persistent state for env file is: ${GITHUBCONF}"
           echo "GITHUBCONF=${GITHUBCONF}" >> "$GITHUB_ENV"
@@ -161,7 +166,7 @@ jobs:
           export $(git config githubconf.env.env4)
           export $(git config githubconf.env.env5)
           export $(git config githubconf.env.env6)
-          echo "BASE_BRANCH=${BASE_BRANCH}" >> "$GITHUB_ENV"
+          echo "BASE_DEV_BRANCH=${BASE_DEV_BRANCH}" >> "$GITHUB_ENV"
           echo "NEW_RELEASE=${NEW_RELEASE}" >> "$GITHUB_ENV"
           echo "NEW_VERSION=${NEW_VERSION}" >> "$GITHUB_ENV"
           echo "NEW_VERSION_TAG=${NEW_VERSION_TAG}" >> "$GITHUB_ENV"
@@ -175,10 +180,13 @@ jobs:
         with:
           cache-on-failure: true
 
+      - name: Install cargo-binstall
+        uses: cargo-bins/cargo-binstall@main
+
       - name: Setup git-cliff
         run: |
-          # Get git-cliff for this platform
-          cargo +stable install git-cliff
+          # Get git-cliff binary for this platform
+          cargo binstall git-cliff --no-confirm
           # Generate default configuration if repository doesn't have one
           if [ -f cliff.toml ]; then
             echo "git-cliff configuration $(pwd)/cliff.toml is present in this repository ('${{ github.repository }}' on '${{ github.ref_name }}' branch)"
@@ -191,7 +199,7 @@ jobs:
         id: release-notes
         run: |
           echo "Generating release notes..."
-          RELEASE_NOTES="$(git-cliff --config github --latest --exclude-path=".github/**/*")\n\n"
+          RELEASE_NOTES="$(git-cliff --config github --latest --tag-pattern="^v\\d+\\.\\d+\\.\\d+$")\n\n"
           RELEASE_NOTES+="### Platforms\n\n"
           RELEASE_NOTES+="- Linux x86-64 gnu-libc\n"
           RELEASE_NOTES+="- Linux x86-64 musl (static)\n"
@@ -209,12 +217,20 @@ jobs:
 
       - name: Download binaries built for different platforms
         uses: actions/download-artifact@v8
+        continue-on-error: true
         with:
           pattern: pcurl-get-*
           path: tmp/assets/
           merge-multiple: true
           run-id: ${{ env.RELEASE_RUN_ID }}
           github-token: ${{ secrets.GITHUB_TOKEN }}
+      
+      - name: Artifact expired - rebuild
+        if: steps.download.outcome == 'failure'
+        run: |
+          echo "Artifact expired, triggering rebuild..."
+          echo "For now exit with failure"
+          exit 1
 
       - name: Platform specific compression (Linux/Macos)
         run: |
@@ -225,7 +241,7 @@ jobs:
             if [[ "${i}" == *"-linux-"* ]]; then
               mv ${i} pcurl-get
               chmod +x pcurl-get
-              tar -zcvf pcurl-get "${i}.tar.gz"
+              tar -zcvf "${i}.tar.gz" pcurl-get
               rm -f pcurl-get
             else
               mv ${i} pcurl-get
@@ -272,35 +288,44 @@ jobs:
       - name: Setup Git
         id: git-setup
         run: |
+          git checkout origin/githubconfig -- .github/config
           echo -e "Git persistent state for env file is: ${{ github.workspace }}/.github/config"
           echo "GITHUBCONF=${{ github.workspace }}/.github/config" >> "$GITHUB_ENV"
           export $(git config githubconf.env.env2)
           export $(git config githubconf.env.env3)
           export $(git config githubconf.env.env4)
           export $(git config githubconf.env.env5)
-          echo "BASE_BRANCH=${BASE_BRANCH}" >> "$GITHUB_ENV"
+          echo "BASE_DEV_BRANCH=${BASE_DEV_BRANCH}" >> "$GITHUB_ENV"
           echo "NEW_RELEASE=${NEW_RELEASE}" >> "$GITHUB_ENV"
           echo "NEW_VERSION=${NEW_VERSION}" >> "$GITHUB_ENV"
           echo "NEW_VERSION_TAG=${NEW_VERSION_TAG}" >> "$GITHUB_ENV"
 
       - name: Merge back to base development branch
         run: |
+          # Next two steps done with the actions/checkout@v6 above
           # git checkout master
           # git pull
-          # Done with the actions/checkout@v6 above
-          git checkout "${BASE_BRANCH}"
-          git merge ${{ github.ref_name }}  # Brings in version tag and changelog
-          # Bump version toward next release (add '+')
-          NEW_VERSION=${NEW_VERSION}+
-          sed -E -i "s/^version = \"[^\"]*\"/version = \"${NEW_VERSION}\"/" Cargo.toml
+          git checkout "${BASE_DEV_BRANCH}"
+          # Merge the master branch into the base development branch, preferring master's version of files
+          git merge -Xtheirs ${{ github.ref_name }} # Brings in version tag and changelog
+          # Bump version toward next release by incrementing patch level (semver)
+          IFS='.' read -r MAJOR MINOR PATCH <<< "${NEW_VERSION}"
+          NEW_VERSION="${MAJOR}.${MINOR}.$((PATCH + 1))"
+          # Skip this step if no Cargo.toml found
+          if [ -f Cargo.toml ] || [ -f cargo.toml ]; then
+            CARGO_FILE=Cargo.toml
+            [ -f Cargo.toml ] || CARGO_FILE=cargo.toml
+            sed -E -i "s/^version = \"[^\"]*\"/version = \"${NEW_VERSION}\"/" "${CARGO_FILE}"
+          fi
           echo ${NEW_VERSION} > VERSION
-          git add VERSION Cargo.toml
-          git commit -m "chore(version): bump version toward next release" -- VERSION Cargo.toml
-          # Push everything to origin/${BASE_BRANCH}
+          git add VERSION "${CARGO_FILE}"
+          git commit -m "chore(version): bump version toward next release" -- VERSION "${CARGO_FILE}"
+          # Push everything to origin/${BASE_DEV_BRANCH}
           git push --all origin
-          # Force delete `release` branch if possible
+          # Force delete `release` and `githubconfig` branches if possible
           # git branch -D release || true
           git branch -r -D origin/release || true
+          git branch -r -D origin/githubconfig || true
 
   notify:
     needs: [check-release, just-release, post-release]
